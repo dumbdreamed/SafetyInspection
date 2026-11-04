@@ -2,13 +2,22 @@
 set -eu
 
 if [ -z "${DJANGO_SECRET_KEY:-}" ] || [ "${DJANGO_SECRET_KEY}" = "local-development-only-change-me" ]; then
-  echo "DJANGO_SECRET_KEY is required. Add it as a private Hugging Face Space secret." >&2
-  exit 1
+  if [ "${PERSISTENCE_CONFIRMED:-0}" = "1" ]; then
+    echo "DJANGO_SECRET_KEY is required when persistent storage is enabled." >&2
+    exit 1
+  fi
+  DJANGO_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(50))')"
+  export DJANGO_SECRET_KEY
+  echo "Generated a temporary Django key; sessions will reset after a container restart."
 fi
 
-mkdir -p "${PERSISTENCE_DIR:-/data}/backups" "${MEDIA_ROOT:-/data/private-media}"
+mkdir -p "${PERSISTENCE_DIR:-/tmp/safetyinspection-data}/backups" "${MEDIA_ROOT:-/tmp/safetyinspection-data/private-media}"
 python manage.py check_persistence
-python manage.py restore_db
+if [ "${PERSISTENCE_CONFIRMED:-0}" = "1" ]; then
+  python manage.py restore_db
+else
+  echo "Ephemeral storage mode: records and uploaded documents may be lost after a Space restart or rebuild."
+fi
 python manage.py migrate --noinput
 python manage.py seed_reference_data
 
@@ -21,7 +30,9 @@ if [ -n "${BOOTSTRAP_ADMIN_USERNAME:-}" ]; then
 fi
 
 python manage.py collectstatic --noinput
-python manage.py backup_db
+if [ "${PERSISTENCE_CONFIRMED:-0}" = "1" ]; then
+  python manage.py backup_db
+fi
 
 exec gunicorn safetyinspection.wsgi:application \
   --bind "0.0.0.0:${PORT:-7860}" \

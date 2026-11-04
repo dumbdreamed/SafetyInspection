@@ -9,14 +9,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     CSRF_TRUSTED_ORIGINS=https://struggler-safetyinspection.hf.space \
     DJANGO_TIME_ZONE=Asia/Tehran \
     DATABASE_PATH=/tmp/safety-inspection.sqlite3 \
-    PERSISTENCE_DIR=/data \
-    MEDIA_ROOT=/data/private-media \
+    PERSISTENCE_DIR=/tmp/safetyinspection-data \
+    MEDIA_ROOT=/tmp/safetyinspection-data/private-media \
     MAX_UPLOAD_MB=20 \
     PERSISTENCE_CONFIRMED=0
 
 RUN groupadd --gid 1000 app && useradd --uid 1000 --gid 1000 --create-home app \
-    && mkdir -p /app /data /data/backups /data/private-media \
-    && chown -R app:app /app /data
+    && mkdir -p /app /tmp/safetyinspection-data/backups /tmp/safetyinspection-data/private-media \
+    && chown -R app:app /app /tmp/safetyinspection-data
 WORKDIR /app
 
 COPY requirements.txt /app/requirements.txt

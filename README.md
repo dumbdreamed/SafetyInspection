@@ -28,27 +28,27 @@ pinned: false
 
 ## راه‌اندازی Space
 
-داده‌های بازرسی می‌توانند شامل شناسه‌ها و مدارک حساس کارکنان باشند. مخزن Space حاوی کد برنامه است؛ پایگاه داده و فایل‌ها را در آن قرار ندهید.
+داده‌های بازرسی ممکن است شامل اطلاعات و مدارک حساس کارکنان باشند. این نسخه بدون Storage Bucket اجرا می‌شود و پایگاه داده SQLite و فایل‌ها را در دیسک موقت container نگه می‌دارد. Hugging Face ممکن است این داده‌ها را هنگام restart یا rebuild حذف کند. برنامه پس از ورود، در همه صفحه‌ها این محدودیت را نشان می‌دهد. این تنظیم برای آزمایش و نمایش است؛ برای استفاده عملیاتی، پیش از افزودن داده واقعی، باید ذخیره‌سازی پایدار خصوصی فعال شود.
 
-۱. در Hugging Face یک **Storage Bucket خصوصی و فقط در محدوده رایگان موردنیاز** بسازید و آن را در تنظیمات Space به صورت read/write در مسیر `/data` متصل کنید. فضای فایل و پشتیبان روی این volume قرار می‌گیرد.
-
-۲. این متغیرها را در `Settings → Variables and secrets` برای Space تنظیم کنید:
+تنظیم Space روی Docker باشد (`sdk: docker` در این مخزن). این متغیرها را در `Settings → Variables and secrets` تنظیم کنید:
 
 | نام | نوع | مقدار |
 |---|---|---|
-| `DJANGO_SECRET_KEY` | Secret | یک رشته تصادفی بلند و محرمانه |
 | `DJANGO_DEBUG` | Variable | `False` |
 | `DJANGO_ALLOWED_HOSTS` | Variable | `struggler-safetyinspection.hf.space` |
 | `CSRF_TRUSTED_ORIGINS` | Variable | `https://struggler-safetyinspection.hf.space` |
-| `PERSISTENCE_CONFIRMED` | Variable | پس از اتصال volume روی `/data`، مقدار `1` |
 | `BOOTSTRAP_ADMIN_USERNAME` | Secret | فقط برای نخستین راه‌اندازی |
 | `BOOTSTRAP_ADMIN_PASSWORD` | Secret | گذرواژه تصادفی حداقل ۱۲ نویسه؛ فقط برای نخستین راه‌اندازی |
 
-۳. پس از اولین راه‌اندازی موفق، دو secret مربوط به ساخت مدیر نخست را از تنظیمات Space حذف کنید. مدیر ساخته‌شده و گذرواژه‌اش در پایگاه داده باقی می‌مانند و راه‌اندازی دوباره آن‌ها را بازنشانی نمی‌کند.
+اگر `DJANGO_SECRET_KEY` تنظیم نشود، container در هر اجرا یک کلید تصادفی می‌سازد؛ در نتیجه نشست‌های ورود پس از restart معتبر نمی‌مانند. برای نشست‌های پایدارتر، یک مقدار تصادفی و محرمانه را در `Settings → Variables and secrets` به صورت Secret با نام `DJANGO_SECRET_KEY` تنظیم کنید.
 
-۴. منتظر بمانید health endpoint به وضعیت موفق برسد: `/health/`. صفحه ورود در نشانی اصلی Space نمایش داده می‌شود.
+برای ورود اولیه، نام کاربری مدیر را در `BOOTSTRAP_ADMIN_USERNAME` و گذرواژه تصادفی با حداقل ۱۲ نویسه را در `BOOTSTRAP_ADMIN_PASSWORD` به صورت Secret اضافه کنید. پس از راه‌اندازی، صفحه ورود در نشانی اصلی Space نمایش داده می‌شود. در حالت موقت، این دو secret را نگه دارید تا اگر دیتابیس با restart از بین رفت، حساب مدیر هنگام اجرای دوباره ساخته شود؛ گذرواژه حساب موجود را بازنشانی نمی‌کنند.
 
-**ماندگاری و پشتیبان:** پایگاه SQLite هنگام اجرا روی دیسک محلی container کار می‌کند؛ پس از هر درخواست تغییردهنده، SQLite Backup API یک snapshot یکپارچه روی volume می‌نویسد. فایل‌های بارگذاری‌شده نیز روی همان volume خصوصی ذخیره می‌شوند. از snapshot روزانه و جدیدترین snapshot نگهداری می‌شود. پشتیبان‌گیری حجم و تأخیر نوشتن را افزایش می‌دهد و به در دسترس بودن volume وابسته است. Space فقط پس از اتصال و راه‌اندازی مجدد آزمایشی، ماندگار تلقی می‌شود.
+پس از راه‌اندازی، `/health/` وضعیت برنامه و حالت `ephemeral` ذخیره‌سازی را نشان می‌دهد.
+
+### فعال‌سازی اختیاری ذخیره‌سازی پایدار
+
+برای نگهداری داده‌ها در restartها، یک Storage Bucket خصوصی را به صورت read/write در `/data` mount کنید و `PERSISTENCE_DIR=/data`، `MEDIA_ROOT=/data/private-media` و `PERSISTENCE_CONFIRMED=1` را تنظیم کنید. در این حالت `DJANGO_SECRET_KEY` را نیز به عنوان Secret پایدار تنظیم کنید. SQLite فعال همچنان روی دیسک موقت کار می‌کند؛ snapshot یکپارچه پس از هر تغییر روی mount نوشته و در راه‌اندازی بعدی بازیابی می‌شود. مدارک نیز روی mount خصوصی می‌مانند. پیش از بهره‌برداری، restart آزمایشی انجام دهید و `/health/` را بررسی کنید.
 
 ## راه‌اندازی محلی ویندوز
 
@@ -83,16 +83,16 @@ python manage.py runserver
 
 ## محیط، ذخیره‌سازی و پشتیبان
 
-- `DJANGO_SECRET_KEY`: کلید محرمانه Django؛ در مخزن قرار ندهید.
+- `DJANGO_SECRET_KEY`: کلید محرمانه Django؛ در مخزن قرار ندهید. بدون آن، در هر اجرا به صورت تصادفی ساخته می‌شود.
 - `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`: تنظیمات محیط اجرا.
 - `DJANGO_TIME_ZONE`: منطقه زمانی، پیش‌فرض `Asia/Tehran`.
 - `DATABASE_PATH`: مسیر فایل SQLite فعال، پیش‌فرض `/tmp/safety-inspection.sqlite3` در Docker.
-- `PERSISTENCE_DIR`: مسیر volume پایدار برای snapshot، پیش‌فرض `/data` در Docker.
-- `MEDIA_ROOT`: محل فایل‌های خصوصی، پیش‌فرض `/data/private-media` در Docker.
-- `PERSISTENCE_CONFIRMED`: فقط بعد از اتصال و بررسی volume خصوصی روی `/data` مقدار `1` بگیرد.
+- `PERSISTENCE_DIR`: مسیر snapshot؛ پیش‌فرض `/tmp/safetyinspection-data` در Docker.
+- `MEDIA_ROOT`: محل فایل‌های خصوصی؛ پیش‌فرض `/tmp/safetyinspection-data/private-media` در Docker.
+- `PERSISTENCE_CONFIRMED`: به طور پیش‌فرض `0`؛ فقط پس از mount و بررسی Storage Bucket خصوصی مقدار `1` بگیرد.
 - `MAX_UPLOAD_MB`: بیشینه اندازه فایل؛ پیش‌فرض ۲۰ مگابایت.
 
-در صورت مشکل snapshot، برنامه علت را ثبت می‌کند و تغییر بعدی را تا موفقیت ذخیره‌سازی معطل می‌گذارد. در دسترس بودن دیسک Spaces یا mount volume در همه لحظه‌ها تضمین نشده است؛ سلامت `/health/` را پس از هر راه‌اندازی بررسی کنید.
+در حالت موقت، snapshot خودکار غیرفعال است و داده‌ها ممکن است با restart یا rebuild از بین بروند. در حالت پایدار، اگر نوشتن snapshot شکست بخورد، برنامه تغییر بعدی را تا موفقیت ذخیره‌سازی معطل می‌گذارد.
 
 ## محدودیت فعلی
 

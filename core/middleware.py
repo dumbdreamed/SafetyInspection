@@ -32,6 +32,8 @@ class PersistenceSnapshotMiddleware:
     def __init__(self, get_response): self.get_response = get_response
 
     def __call__(self, request):
+        if not settings.PERSISTENCE_CONFIRMED:
+            return self.get_response(request)
         if request.method not in {"GET", "HEAD", "OPTIONS", "TRACE"} and state()["error"]:
             try:
                 backup_database()

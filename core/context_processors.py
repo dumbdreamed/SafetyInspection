@@ -1,3 +1,6 @@
+from django.conf import settings
+
+
 def navigation(request):
     user = request.user
     manager = user.is_authenticated and (user.is_superuser or user.groups.filter(name__in=["Administrator", "Safety Manager"]).exists())
@@ -8,4 +11,5 @@ def navigation(request):
         ("اقدامات اصلاحی", "finding_list", "⚠"), ("مدارک", "document_new", "▤"),
         ("تعمیر و نگهداری", "maintenance_list", "⚙"), ("گزارش‌ها", "reports", "▥"),
         ("تنظیمات", "settings_page", "☷"),
-    ], "can_manage": manager, "can_edit": editor}
+    ], "can_manage": manager, "can_edit": editor,
+        "storage_is_ephemeral": not settings.DEBUG and not settings.PERSISTENCE_CONFIRMED}

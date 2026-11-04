@@ -24,6 +24,7 @@
     </header>
     <main class="page-content">
       {% if messages %}<div class="flash-stack" aria-live="polite">{% for message in messages %}<div class="flash {% if message.tags == 'error' %}flash-error{% elif message.tags == 'warning' %}flash-warning{% else %}flash-success{% endif %}"><span>{{ message }}</span><button type="button" class="flash-close" aria-label="بستن" data-dismiss>×</button></div>{% endfor %}</div>{% endif %}
+      {% if storage_is_ephemeral %}<div class="notice notice-warning" role="status"><span>!</span><div><strong>ذخیره‌سازی موقت</strong><p>اطلاعات و مدارک ممکن است پس از راه‌اندازی مجدد یا بازسازی Space از بین بروند.</p></div></div>{% endif %}
       {% block content %}{% endblock %}
       <footer class="page-footer">سامانه داخلی ثبت و پیگیری بازرسی‌های ایمنی <span>زمان محلی: تهران</span></footer>
     </main>

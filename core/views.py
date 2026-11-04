@@ -449,10 +449,11 @@ def health(request):
         with connection.cursor() as cursor: cursor.execute("SELECT 1")
     except Exception:
         return JsonResponse({"status": "unhealthy"}, status=503)
-    if not settings.DEBUG:
+    if not settings.DEBUG and settings.PERSISTENCE_CONFIRMED:
         ready = (settings.PERSISTENCE_CONFIRMED
                  and (settings.PERSISTENCE_DIR / ".safetyinspection-initialized").exists()
                  and (settings.PERSISTENCE_DIR / "backups" / "latest.sqlite3").exists())
         if not ready:
             return JsonResponse({"status": "degraded", "persistence": "not-confirmed"}, status=503)
-    return JsonResponse({"status": "ok"})
+    storage = "local" if settings.DEBUG else ("persistent" if settings.PERSISTENCE_CONFIRMED else "ephemeral")
+    return JsonResponse({"status": "ok", "storage": storage})

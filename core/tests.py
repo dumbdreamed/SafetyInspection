@@ -157,3 +157,11 @@ class PersistentSnapshotTests(TransactionTestCase):
                 self.assertTrue(restore_database())
                 names = {row[0] for row in sqlite3.connect(target_db).execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 self.assertIn("core_equipment", names)
+
+
+class EphemeralDeploymentTests(TestCase):
+    @override_settings(DEBUG=False, PERSISTENCE_CONFIRMED=False)
+    def test_health_check_accepts_ephemeral_storage_and_reports_it(self):
+        response = Client().get("/health/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok", "storage": "ephemeral"})
