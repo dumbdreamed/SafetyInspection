@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}ورود{% endblock %}
+{% block guest_content %}
+<main class="login-page">
+  <section class="login-art"><div class="login-emblem">س</div><span class="eyebrow">مدیریت ایمنی کارخانه</span><h1>ایمنی بازرسی می‌شود.<br>اطمینان ساخته می‌شود.</h1><p>پایش تجهیزات، برنامه‌ریزی بازرسی و پیگیری اقدام‌های اصلاحی در یک نگاه.</p><div class="login-art-foot"><span class="live-dot"></span>محیط امن سازمانی</div></section>
+  <section class="login-panel"><a class="brand login-brand" href="{% url 'login' %}"><span class="brand-mark">س</span><span><strong>نگهبان ایمنی</strong><small>سامانه بازرسی تجهیزات</small></span></a><div class="login-card"><span class="eyebrow">خوش آمدید</span><h2>ورود به سامانه</h2><p class="muted">برای ادامه، اطلاعات حساب کاربری خود را وارد کنید.</p>
+    <form method="post" class="form-stack">{% csrf_token %}
+      {% if form.non_field_errors %}<div class="form-errors">{{ form.non_field_errors }}</div>{% endif %}
+      <div class="field"><label for="id_username">نام کاربری</label><input class="field-input" id="id_username" name="username" autocomplete="username" required autofocus dir="ltr"></div>
+      <div class="field"><label for="id_password">گذرواژه</label><input class="field-input" id="id_password" name="password" type="password" autocomplete="current-password" required dir="ltr"></div>
+      {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+      <button class="button button-primary button-wide" type="submit">ورود امن <span aria-hidden="true">←</span></button>
+    </form><div class="login-note"><span>◈</span> دسترسی به اطلاعات فقط برای کاربران مجاز امکان‌پذیر است.</div>
+  </div><div class="login-copyright">سامانه مدیریت ایمنی و نگهداری تجهیزات</div></section>
+</main>
+{% endblock %}

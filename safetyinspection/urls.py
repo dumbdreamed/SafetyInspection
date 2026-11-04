@@ -1,0 +1,38 @@
+from django.contrib import admin
+from django.contrib.auth import views as auth_views
+from django.urls import include, path
+from core import views
+
+urlpatterns = [
+    path("admin/", admin.site.urls),
+    path("", views.dashboard, name="dashboard"),
+    path("login/", auth_views.LoginView.as_view(template_name="registration/login.html"), name="login"),
+    path("logout/", auth_views.LogoutView.as_view(), name="logout"),
+    path("equipment/", views.equipment_list, name="equipment_list"),
+    path("equipment/new/", views.equipment_edit, name="equipment_new"),
+    path("equipment/<int:pk>/", views.equipment_detail, name="equipment_detail"),
+    path("equipment/<int:pk>/edit/", views.equipment_edit, name="equipment_edit"),
+    path("equipment/<int:pk>/archive/", views.equipment_archive, name="equipment_archive"),
+    path("people/", views.people_list, name="people_list"),
+    path("people/new/", views.person_edit, name="person_new"),
+    path("people/<int:pk>/", views.person_detail, name="person_detail"),
+    path("people/<int:pk>/edit/", views.person_edit, name="person_edit"),
+    path("assignments/new/", views.assignment_new, name="assignment_new"),
+    path("qualifications/new/", views.qualification_new, name="qualification_new"),
+    path("documents/new/", views.document_new, name="document_new"),
+    path("documents/<int:pk>/download/", views.document_download, name="document_download"),
+    path("inspections/", views.inspection_list, name="inspection_list"),
+    path("inspections/new/", views.inspection_new, name="inspection_new"),
+    path("inspections/<int:pk>/", views.inspection_detail, name="inspection_detail"),
+    path("inspections/<int:pk>/complete/", views.inspection_complete, name="inspection_complete"),
+    path("findings/", views.finding_list, name="finding_list"),
+    path("findings/new/", views.finding_new, name="finding_new"),
+    path("findings/<int:pk>/close/", views.finding_close, name="finding_close"),
+    path("maintenance/", views.maintenance_list, name="maintenance_list"),
+    path("maintenance/new/", views.maintenance_new, name="maintenance_new"),
+    path("reports/", views.reports, name="reports"),
+    path("reports/equipment.csv", views.equipment_csv, name="equipment_csv"),
+    path("settings/", views.settings_page, name="settings_page"),
+    path("settings/types/new/", views.type_new, name="type_new"),
+    path("health/", views.health, name="health"),
+]
