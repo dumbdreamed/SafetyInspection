@@ -6,7 +6,7 @@
   const themeMeta = document.querySelector('meta[name="theme-color"]');
   const applyTheme = (theme) => {
     document.documentElement.dataset.theme = theme;
-    themeMeta?.setAttribute("content", theme === "dark" ? "#111b1d" : "#f5f7f5");
+    themeMeta?.setAttribute("content", theme === "dark" ? "#090c12" : "#f5f7f5");
     if (themeToggle) {
       const dark = theme === "dark";
       themeToggle.setAttribute("aria-label", dark ? "تغییر به پوسته روشن" : "تغییر به پوسته تاریک");
