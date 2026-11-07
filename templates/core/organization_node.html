@@ -1,0 +1,13 @@
+{% load fa %}
+<li class="organization-branch">
+  <article class="organization-card level-{{ node.position.level }}">
+    <div class="organization-avatar" aria-hidden="true">{% include "core/person_avatar.html" with person=node.position.person level=node.position.level %}</div>
+    <a class="organization-person" href="{% url 'person_detail' node.position.person_id %}">{{ node.position.person.full_name }}</a>
+    <span class="organization-title">{{ node.position.title }}</span>
+    <span class="organization-level">{{ node.role_label|default:node.position.get_level_display }}{% if not node.position.person.active %} · غیرفعال{% endif %}</span>
+    {% if node.position.clusters.all %}<div class="organization-group-tags">{% for group in node.position.clusters.all %}<span>{{ group.name }}</span>{% endfor %}</div>{% endif %}
+    <div class="organization-actions"><a href="{% url 'finding_list' %}?assignee={{ node.position.person_id }}">نقص‌های باز · {{ node.position.open_findings|fa }}</a>{% if can_manage and node.position.person.active %}<a href="{% url 'finding_new' %}?assignee={{ node.position.person_id }}">＋ تخصیص نقص</a>{% endif %}</div>
+    {% if can_manage %}<div class="organization-controls"><a data-org-modal-link href="{% url 'person_edit' node.position.person_id %}?next=organization">ویرایش نقش و مدیر</a><form method="post" data-org-async action="{% url 'organization_remove' node.position.pk %}" data-confirm="این فرد از نمودار جدا شود؟ نقش او حفظ و زیرمجموعه‌ها به مدیر بالاتر منتقل می‌شوند.">{% csrf_token %}<button type="submit">حذف از نمودار</button></form></div>{% endif %}
+  </article>
+  {% if node.children %}<ul class="organization-children">{% for child in node.children %}{% include "core/organization_node.html" with node=child %}{% endfor %}</ul>{% endif %}
+</li>

@@ -72,7 +72,8 @@ python manage.py runserver
 ## دستورهای مدیریت
 
 - `python manage.py seed_reference_data` — افزودن امن و تکرارپذیر انواع و چک‌لیست‌های شروع.
-- `python manage.py seed_demo_data` — افزودن چند رکورد ساختگی با کد `DEMO` برای نمایش محلی؛ اجرا در داده واقعی ممنوع.
+- `python manage.py seed_demo_data --per-type 50` — ساخت ۵۰ تجهیز برای هر نوع فعال، همراه با پرونده‌های ساختگی راننده، بازرسی، نقص، تعمیر و PDFهای نمونه با کد `DEMO`؛ فقط در محیط محلی و هرگز روی داده واقعی اجرا نشود. اجرای دوباره رکوردهای DEMO تکراری نمی‌سازد.
+- `python manage.py seed_demo_organization` — ساخت نقش‌ها، مدیران مستقیم و گروه‌های بخشی برای پرسنل آزمایشی `DEMO-OP-`؛ افراد و گروه‌های واقعی را تغییر نمی‌دهد.
 - `python manage.py backup_db` — ساخت snapshot سازگار و بررسی یکپارچگی SQLite.
 - `python manage.py restore_db` — بازیابی آخرین snapshot؛ snapshot خراب یا گم‌شده مانع راه‌اندازی دیتابیس خالی می‌شود.
 - `python manage.py createsuperuser` یا `python manage.py bootstrap_admin` — ایجاد مدیر.

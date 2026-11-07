@@ -5,6 +5,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
@@ -59,13 +60,18 @@ class Equipment(models.Model):
     asset_code = models.CharField("کد اموال", max_length=40, unique=True)
     name = models.CharField("نام تجهیز", max_length=120)
     equipment_type = models.ForeignKey(EquipmentType, on_delete=models.PROTECT, verbose_name="نوع تجهیز", related_name="equipment")
+    machine_subtype = models.CharField("نوع / مدل ماشین", max_length=120, blank=True)
     manufacturer = models.CharField("سازنده", max_length=100, blank=True)
     model_name = models.CharField("مدل", max_length=100, blank=True)
     year = models.PositiveSmallIntegerField("سال ساخت میلادی", null=True, blank=True)
     serial_number = models.CharField("شماره سریال", max_length=100, blank=True, db_index=True)
+    engine_number = models.CharField("شماره موتور", max_length=100, blank=True, db_index=True)
     vin = models.CharField("شماره شاسی / VIN", max_length=100, blank=True)
     plate = models.CharField("شماره پلاک", max_length=30, blank=True)
     owner = models.CharField("مالک / پیمانکار", max_length=120, blank=True)
+    primary_contractor = models.CharField("پیمانکار اصلی", max_length=120, blank=True)
+    subcontractor = models.CharField("پیمانکار فرعی", max_length=120, blank=True)
+    position = models.CharField("موقعیت تجهیز", max_length=120, blank=True)
     area = models.ForeignKey(Area, on_delete=models.PROTECT, null=True, blank=True, verbose_name="ناحیه", related_name="equipment")
     department = models.ForeignKey(Department, on_delete=models.PROTECT, null=True, blank=True, verbose_name="واحد", related_name="equipment")
     rated_capacity = models.DecimalField("ظرفیت نامی", max_digits=12, decimal_places=2, null=True, blank=True)
@@ -73,6 +79,17 @@ class Equipment(models.Model):
     power_type = models.CharField("نوع سوخت / نیرو", max_length=50, blank=True)
     status = models.CharField("وضعیت بهره‌برداری", max_length=12, choices=Status.choices, default=Status.ACTIVE)
     commissioned_on = models.DateField("تاریخ راه‌اندازی", null=True, blank=True)
+    entered_on = models.DateField("تاریخ ورود", null=True, blank=True)
+    exited_on = models.DateField("تاریخ خروج", null=True, blank=True)
+    third_party_insurance_expires_on = models.DateField("تاریخ انقضای بیمه شخص ثالث", null=True, blank=True)
+    liability_insurance_expires_on = models.DateField("تاریخ انقضای بیمه مسئولیت مدنی", null=True, blank=True)
+    desert_insurance_expires_on = models.DateField("تاریخ انقضای بیمه بیابانی", null=True, blank=True)
+    technical_inspection_expires_on = models.DateField("تاریخ انقضای معاینه فنی", null=True, blank=True)
+    confirmed_capacity = models.DecimalField("ظرفیت تأییدشده", max_digits=12, decimal_places=2, null=True, blank=True)
+    large_hook_capacity = models.DecimalField("ظرفیت قلاب بزرگ (تن)", max_digits=12, decimal_places=2, null=True, blank=True)
+    small_hook_capacity = models.DecimalField("ظرفیت قلاب کوچک (تن)", max_digits=12, decimal_places=2, null=True, blank=True)
+    certificate_issued_on = models.DateField("تاریخ اخذ گواهی بازرسی", null=True, blank=True)
+    certificate_expires_on = models.DateField("تاریخ انقضای گواهی بازرسی", null=True, blank=True)
     notes = models.TextField("یادداشت", blank=True)
     archived = models.BooleanField("بایگانی‌شده", default=False)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_equipment")
@@ -102,6 +119,9 @@ class Equipment(models.Model):
     def condition(self):
         if self.status == self.Status.STOPPED or self.open_findings.filter(blocks_operation=True).exists():
             return "خارج از سرویس", "danger"
+        latest = self.inspections.filter(status=Inspection.Status.COMPLETED).order_by("-completed_at", "-pk").first()
+        if latest and latest.outcome == Inspection.Outcome.FAIL:
+            return "بازرسی مردود", "danger"
         if self.status == self.Status.SERVICE:
             return "در حال تعمیر", "warning"
         if self.open_findings.exists():
@@ -123,6 +143,7 @@ class Equipment(models.Model):
 class Person(models.Model):
     employee_code = models.CharField("کد پرسنلی / پیمانکاری", max_length=40, unique=True)
     full_name = models.CharField("نام و نام خانوادگی", max_length=160)
+    photo = models.ImageField("عکس پروفایل", upload_to="person-photos/", blank=True)
     employer = models.CharField("شرکت / پیمانکار", max_length=120, blank=True)
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="واحد")
     phone = models.CharField("شماره تماس", max_length=40, blank=True)
@@ -138,6 +159,72 @@ class Person(models.Model):
 
     def __str__(self):
         return f"{self.full_name} ({self.employee_code})"
+
+
+class OrganizationPosition(models.Model):
+    class Level(models.TextChoices):
+        TOP = "top", "مدیریت ارشد"
+        MIDDLE = "middle", "مدیریت میانی"
+        SUPERVISOR = "supervisor", "سرپرست"
+        EMPLOYEE = "employee", "کارمند"
+        OTHER = "other", "سایر"
+
+    person = models.OneToOneField(Person, on_delete=models.CASCADE, related_name="organization_position", verbose_name="شخص")
+    title = models.CharField("عنوان شغلی", max_length=120)
+    level = models.CharField("سطح سازمانی", max_length=20, choices=Level.choices, default=Level.EMPLOYEE)
+    manager = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="reports", verbose_name="مدیر مستقیم")
+    order = models.PositiveSmallIntegerField("ترتیب نمایش", default=0)
+    chart_visible = models.BooleanField("نمایش در نمودار", default=True)
+
+    class Meta:
+        ordering = ["order", "person__full_name", "pk"]
+        verbose_name = "جایگاه سازمانی"
+        verbose_name_plural = "جایگاه‌های سازمانی"
+
+    def clean(self):
+        super().clean()
+        managerial_levels = {self.Level.TOP, self.Level.MIDDLE, self.Level.SUPERVISOR}
+        if self.manager and self.manager.level not in managerial_levels:
+            raise ValidationError({"manager": "مدیر مستقیم باید سطح مدیریتی یا سرپرستی داشته باشد."})
+        if self.pk and self.level not in managerial_levels and self.reports.exists():
+            raise ValidationError({"level": "پیش از تغییر سطح این مدیر، مدیر مستقیم افراد زیرمجموعه را تغییر دهید."})
+        current = self.manager
+        seen = set()
+        while current:
+            if current.pk == self.pk and self.pk is not None:
+                raise ValidationError({"manager": "مدیر مستقیم نمی‌تواند خود فرد یا یکی از زیرمجموعه‌های او باشد."})
+            if current.pk in seen:
+                raise ValidationError({"manager": "چرخه در ساختار مدیران مجاز نیست."})
+            seen.add(current.pk)
+            current = current.manager
+
+    def __str__(self):
+        return f"{self.person.full_name} — {self.title}"
+
+
+def show_organization_chain(position):
+    """Make a reporting line visible without changing its roles or managers."""
+    ids, seen = [], set()
+    while position and position.pk not in seen:
+        seen.add(position.pk)
+        ids.append(position.pk)
+        position = position.manager
+    OrganizationPosition.objects.filter(pk__in=ids).update(chart_visible=True)
+
+
+class OrganizationCluster(models.Model):
+    name = models.CharField("نام گروه", max_length=100, unique=True)
+    members = models.ManyToManyField(OrganizationPosition, blank=True, related_name="clusters", verbose_name="اعضای گروه")
+    role_labels = models.JSONField("برچسب نقش‌ها", default=dict, blank=True)
+    chart_structure = models.JSONField("ساختار چارت", default=list, blank=True)
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name = "گروه چارت سازمانی"
+        verbose_name_plural = "گروه‌های چارت سازمانی"
+
+    def __str__(self):
+        return self.name
 
 
 class QualificationType(models.Model):
@@ -294,6 +381,7 @@ class ChecklistTemplate(models.Model):
     interval_months = models.PositiveSmallIntegerField("تکرار به ماه", default=0, help_text="صفر: بدون تکرار")
     interval_days = models.PositiveSmallIntegerField("تکرار به روز", default=0, help_text="برای تناوب روزانه یا هفتگی")
     active = models.BooleanField("فعال", default=True)
+    rejection_threshold = models.PositiveSmallIntegerField("آستانه رد (درصد وزن مردود)", default=20, validators=[MinValueValidator(1), MaxValueValidator(100)])
 
     class Meta:
         ordering = ["name"]
@@ -313,6 +401,7 @@ class ChecklistItem(models.Model):
     section = models.CharField("بخش", max_length=100, blank=True)
     description = models.CharField("مورد بازرسی", max_length=240)
     critical = models.BooleanField("مورد بحرانی", default=False)
+    weight = models.PositiveSmallIntegerField("وزن", default=1, validators=[MinValueValidator(1), MaxValueValidator(10)])
     order = models.PositiveSmallIntegerField("ترتیب", default=0)
 
     class Meta:
@@ -352,6 +441,8 @@ class Inspection(models.Model):
     notes = models.TextField("یادداشت")
     completed_at = models.DateTimeField("زمان تکمیل", null=True, blank=True)
     template_snapshot = models.JSONField("نسخه چک‌لیست", default=list, blank=True)
+    threshold_snapshot = models.PositiveSmallIntegerField("آستانه رد ثبت‌شده", default=20)
+    failed_weight_percent = models.DecimalField("درصد وزن مردود", max_digits=5, decimal_places=2, null=True, blank=True)
     created_at = models.DateTimeField("زمان ثبت", auto_now_add=True)
 
     class Meta:
@@ -374,6 +465,7 @@ class InspectionResponse(models.Model):
     item = models.ForeignKey(ChecklistItem, on_delete=models.PROTECT, null=True, blank=True)
     item_text = models.CharField("مورد بازرسی", max_length=240)
     critical = models.BooleanField("بحرانی", default=False)
+    weight = models.PositiveSmallIntegerField("وزن ثبت‌شده", default=1)
     result = models.CharField("نتیجه", max_length=8, choices=Result.choices)
     comment = models.CharField("توضیح", max_length=500, blank=True)
     measurement = models.CharField("اندازه‌گیری", max_length=80, blank=True)
@@ -402,6 +494,7 @@ class Finding(models.Model):
     severity = models.CharField("شدت", max_length=10, choices=Severity.choices, default=Severity.MEDIUM)
     blocks_operation = models.BooleanField("توقف بهره‌برداری", default=False)
     assigned_to = models.CharField("مسئول پیگیری", max_length=120, blank=True)
+    assigned_person = models.ForeignKey(Person, on_delete=models.PROTECT, null=True, blank=True, related_name="assigned_findings", verbose_name="مسئول رفع نقص")
     due_date = models.DateField("مهلت اصلاح", null=True, blank=True)
     status = models.CharField("وضعیت اقدام", max_length=10, choices=Status.choices, default=Status.OPEN)
     resolution = models.TextField("شرح رفع نقص", blank=True)

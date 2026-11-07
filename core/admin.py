@@ -3,8 +3,8 @@ from django.utils.html import format_html
 
 from .models import (Area, Assignment, AuditLog, ChecklistItem, ChecklistTemplate, Department,
                     Document, DocumentCategory, Equipment, EquipmentType, Finding,
-                    Inspection, InspectionResponse, MaintenanceRecord, Person,
-                    Qualification, QualificationType)
+                    Inspection, InspectionResponse, MaintenanceRecord, OrganizationCluster, OrganizationPosition, Person,
+                    Qualification, QualificationType, show_organization_chain)
 
 
 class ItemInline(admin.TabularInline):
@@ -14,7 +14,7 @@ class ItemInline(admin.TabularInline):
 
 @admin.register(ChecklistTemplate)
 class ChecklistTemplateAdmin(admin.ModelAdmin):
-    list_display = ("name", "equipment_type", "interval_months", "interval_days", "active")
+    list_display = ("name", "equipment_type", "rejection_threshold", "interval_months", "interval_days", "active")
     list_filter = ("active", "equipment_type")
     inlines = (ItemInline,)
 
@@ -32,6 +32,30 @@ class PersonAdmin(admin.ModelAdmin):
     list_display = ("employee_code", "full_name", "employer", "department", "active")
     list_filter = ("active", "department")
     search_fields = ("employee_code", "full_name", "employer")
+
+
+@admin.register(OrganizationPosition)
+class OrganizationPositionAdmin(admin.ModelAdmin):
+    list_display = ("person", "title", "level", "manager", "order")
+    list_filter = ("level",)
+    search_fields = ("person__full_name", "person__employee_code", "title")
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_readonly_fields(self, request, obj=None):
+        return ("person",) if obj else ()
+
+
+@admin.register(OrganizationCluster)
+class OrganizationClusterAdmin(admin.ModelAdmin):
+    search_fields = ("name",)
+    filter_horizontal = ("members",)
+
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        for position in form.instance.members.select_related("manager"):
+            show_organization_chain(position)
 
 
 @admin.register(Document)

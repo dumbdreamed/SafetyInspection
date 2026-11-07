@@ -1,0 +1,36 @@
+{% load fa %}
+<section class="panel fleet-summary">
+  <div class="panel-heading">
+    <div><span class="eyebrow">اطلاعات دفتر ثبت ناوگان</span><h2>مشخصات تجهیز طبق برگه مربوط</h2></div>
+  </div>
+  <dl class="fleet-summary-grid">
+    <div><dt>کد دستگاه</dt><dd>{{ item.asset_code|default:"—" }}</dd></div>
+    <div><dt>سال ساخت</dt><dd>{{ item.year|fa|default:"—" }}</dd></div>
+    {% if "machine_subtype" in sheet_fields and item.machine_subtype %}<div><dt>نوع دستگاه</dt><dd>{{ item.machine_subtype }}</dd></div>{% endif %}
+    {% if "manufacturer" in sheet_fields %}<div><dt>شرکت سازنده</dt><dd>{{ item.manufacturer|default:"—" }}</dd></div>{% endif %}
+    {% if "position" in sheet_fields %}<div><dt>موقعیت</dt><dd>{{ item.position|default:"—" }}</dd></div>{% endif %}
+    {% if "plate" in sheet_fields %}<div><dt>شماره انتظامی</dt><dd>{{ item.plate|default:"—" }}</dd></div>{% endif %}
+    {% if "serial_number" in sheet_fields %}<div><dt>شماره سریال</dt><dd>{{ item.serial_number|default:"—" }}</dd></div>{% endif %}
+    {% if "vin" in sheet_fields %}<div><dt>شماره شاسی</dt><dd>{{ item.vin|default:"—" }}</dd></div>{% endif %}
+    {% if "engine_number" in sheet_fields %}<div><dt>شماره موتور</dt><dd>{{ item.engine_number|default:"—" }}</dd></div>{% endif %}
+    {% if "rated_capacity" in sheet_fields %}<div><dt>تناژ اسمی</dt><dd>{{ item.rated_capacity|fa|default:"—" }} {{ item.capacity_unit|default:"تن" }}</dd></div>{% endif %}
+    {% if "confirmed_capacity" in sheet_fields %}<div><dt>ظرفیت تأییدشده</dt><dd>{{ item.confirmed_capacity|fa|default:"—" }} {{ item.capacity_unit|default:"تن" }}</dd></div>{% endif %}
+    {% if "large_hook_capacity" in sheet_fields %}<div><dt>ظرفیت قلاب بزرگ</dt><dd>{{ item.large_hook_capacity|fa|default:"—" }} تن</dd></div>{% endif %}
+    {% if "small_hook_capacity" in sheet_fields %}<div><dt>ظرفیت قلاب کوچک</dt><dd>{{ item.small_hook_capacity|fa|default:"—" }} تن</dd></div>{% endif %}
+    <div><dt>وضعیت</dt><dd><span class="status-pill {% if item.status == 'active' %}status-success{% elif item.status == 'stopped' %}status-danger{% else %}status-warning{% endif %}">{{ item.get_status_display }}</span></dd></div>
+    {% if "entered_on" in sheet_fields %}<div><dt>تاریخ ورود</dt><dd>{{ item.entered_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
+    {% if "exited_on" in sheet_fields %}<div><dt>تاریخ خروج</dt><dd>{{ item.exited_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
+    {% if "third_party_insurance_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای بیمه شخص ثالث</dt><dd>{{ item.third_party_insurance_expires_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
+    {% if "liability_insurance_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای بیمه مسئولیت مدنی</dt><dd>{{ item.liability_insurance_expires_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
+    {% if "desert_insurance_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای بیمه بیابانی</dt><dd>{{ item.desert_insurance_expires_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
+    {% if "technical_inspection_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای معاینه فنی</dt><dd>{{ item.technical_inspection_expires_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
+    {% if "certificate_issued_on" in sheet_fields %}<div><dt>تاریخ اخذ گواهی</dt><dd>{{ item.certificate_issued_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
+    {% if "certificate_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای گواهی</dt><dd>{{ item.certificate_expires_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
+    {% if "primary_contractor" in sheet_fields %}<div><dt>پیمانکار اصلی</dt><dd>{{ item.primary_contractor|default:"—" }}</dd></div>{% endif %}
+    {% if "subcontractor" in sheet_fields %}<div><dt>پیمانکار فرعی</dt><dd>{{ item.subcontractor|default:"—" }}</dd></div>{% endif %}
+  </dl>
+  <div class="fleet-summary-footer">
+    <span>مشخصات این تجهیز بر اساس ستون‌های برگه مربوط در فایل فهرست ماشین‌آلات نمایش داده می‌شود.</span>
+    {% if can_edit %}<a class="button button-small button-outline" href="{% url 'document_new' %}?equipment={{ item.pk }}">ثبت مدرک بیمه</a>{% endif %}
+  </div>
+</section>

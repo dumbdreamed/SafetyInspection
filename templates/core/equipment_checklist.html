@@ -1,0 +1,24 @@
+{% load fa %}
+{% if equipment_checklist %}
+<section class="panel profile-history inspection-hub" aria-labelledby="equipment-checklist-title">
+  <div class="inspection-hub-heading">
+    <div><span class="eyebrow">بازرسی ایمنی · {{ item.equipment_type.name }}</span><h2 id="equipment-checklist-title">وضعیت و چک‌لیست بازرسی</h2><p>نتیجه آخرین بازرسی و مواردی که باید بررسی شوند.</p></div>
+    {% if can_edit %}<a class="button button-primary" href="{% url 'inspection_new' %}?equipment={{ item.pk }}">＋ شروع بازرسی</a>{% endif %}
+  </div>
+  <div class="inspection-overview">
+    <div class="inspection-result {% if latest_inspection.outcome == 'pass' %}result-pass{% elif latest_inspection.outcome == 'conditional' %}result-conditional{% elif latest_inspection.outcome == 'fail' %}result-fail{% else %}result-unknown{% endif %}">
+      <span class="inspection-result-icon" aria-hidden="true">{% if latest_inspection.outcome == 'pass' %}✓{% elif latest_inspection.outcome == 'conditional' %}!{% elif latest_inspection.outcome == 'fail' %}×{% else %}—{% endif %}</span>
+      <div><small>نتیجه آخرین بازرسی تکمیل‌شده</small><strong>{% if latest_inspection.outcome == 'pass' %}قبول{% elif latest_inspection.outcome == 'conditional' %}قبول مشروط{% elif latest_inspection.outcome == 'fail' %}مردود{% elif latest_inspection %}نتیجه ثبت نشده{% else %}هنوز بازرسی نشده{% endif %}</strong>
+      {% if latest_inspection.completed_at %}<span>{{ latest_inspection.completed_at|date:"Y/m/d"|fa }}</span>{% endif %}</div>
+      {% if latest_inspection %}<a href="{% url 'inspection_detail' latest_inspection.pk %}">مشاهده نتیجه ←</a>{% endif %}
+    </div>
+    <div class="inspection-stat"><small>وزن مردود در آخرین بازرسی</small><strong>{% if latest_inspection.failed_weight_percent != None %}{{ latest_inspection.failed_weight_percent|fa }}٪{% else %}—{% endif %}</strong><span>{% if latest_inspection.failed_weight_percent != None %}آستانه همان بازرسی: {{ latest_inspection.threshold_snapshot|fa }}٪{% else %}امتیاز ثبت‌شده‌ای در دسترس نیست{% endif %}</span></div>
+    <div class="inspection-stat"><small>چک‌لیست پیشنهادی</small><strong>{{ checklist_items|length|fa }} مورد</strong><span>{{ checklist_critical_count|fa }} مورد بحرانی · آستانه رد {{ equipment_checklist.rejection_threshold|fa }}٪</span></div>
+  </div>
+  <p class="inspection-rule">خرابی هر مورد بحرانی به‌تنهایی موجب رد می‌شود. وزن‌ها و آستانه پیشنهادی باید با دستورالعمل سازنده و الزامات محل کار تأیید شوند.</p>
+  <details class="inspection-checks" open>
+    <summary><span>موارد چک‌لیست</span><span>{{ checklist_items|length|fa }} مورد <span class="inspection-chevron" aria-hidden="true">⌄</span></span></summary>
+    <div class="inspection-check-grid">{% for check in checklist_items %}<div class="inspection-check"><span class="inspection-check-index">{{ forloop.counter|fa }}</span><span class="inspection-check-name">{{ check.description }}</span><span class="inspection-check-tags"><span class="inspection-weight">وزن {{ check.weight|fa }}</span>{% if check.critical %}<span class="inspection-critical">بحرانی</span>{% endif %}</span></div>{% empty %}<p class="muted">موردی در این چک‌لیست ثبت نشده است.</p>{% endfor %}</div>
+  </details>
+</section>
+{% endif %}

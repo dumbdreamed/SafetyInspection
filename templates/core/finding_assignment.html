@@ -1,0 +1,5 @@
+<form method="post" action="{% url 'finding_close' finding.pk %}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}" class="finding-assignment-edit">{% csrf_token %}
+  <label for="finding_assigned_{{ finding.pk }}">مسئول رفع نقص<select class="field-input" id="finding_assigned_{{ finding.pk }}" name="assigned_person" required><option value="">انتخاب شخص</option>{% for person in people %}<option value="{{ person.pk }}" {% if finding.assigned_person_id == person.pk %}selected{% endif %}>{{ person.full_name }} · {{ person.employee_code }}</option>{% endfor %}</select></label>
+  <label for="finding_due_{{ finding.pk }}">مهلت اصلاح<input class="field-input" type="date" id="finding_due_{{ finding.pk }}" name="due_date" value="{{ finding.due_date|date:'Y-m-d' }}" required></label>
+  <button class="button button-small button-outline" name="action" value="assign">ثبت مسئول و مهلت</button>
+</form>

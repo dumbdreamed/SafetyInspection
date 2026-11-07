@@ -1,0 +1,4 @@
+<div class="finding-assignment" data-finding-assignment>
+  <label for="assigned_{{ item.id }}">مسئول رفع نقص <span class="required-star">*</span><select class="field-input" id="assigned_{{ item.id }}" name="assigned_{{ item.id }}"><option value="">انتخاب شخص</option>{% for person in people %}<option value="{{ person.pk }}">{{ person.full_name }} · {{ person.employee_code }}</option>{% endfor %}</select></label>
+  <label for="due_{{ item.id }}">مهلت اصلاح <span class="required-star">*</span><input class="field-input" type="date" id="due_{{ item.id }}" name="due_{{ item.id }}"></label>
+</div>

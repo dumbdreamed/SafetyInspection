@@ -1,0 +1,1 @@
+{% load static person_avatars %}{% if person.photo %}<img class="person-avatar-photo" src="{% url 'person_photo' person.pk %}" alt="" loading="lazy">{% else %}<img class="person-avatar-fallback" src="{% static person|rank_avatar:level %}" alt="" loading="lazy">{% endif %}

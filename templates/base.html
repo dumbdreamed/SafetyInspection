@@ -2,8 +2,9 @@
 <html lang="fa" dir="rtl">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#12252b"><title>{% block title %}بازرسی ایمنی{% endblock %} | بازرسی ایمنی</title>
-  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <meta name="theme-color" content="#f5f7f5"><title>{% block title %}بازرسی ایمنی{% endblock %} | بازرسی ایمنی</title>
+  <script>try{const saved=localStorage.getItem('safetyinspection-theme');const dark=saved?saved==='dark':matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.dataset.theme=dark?'dark':'light'}catch(e){document.documentElement.dataset.theme='light'}</script>
+  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=23">
 </head>
 <body class="{% if can_manage %}role-manager{% else %}role-regular{% endif %}">
 {% if user.is_authenticated %}
@@ -12,7 +13,7 @@
     <a class="brand" href="{% url 'dashboard' %}"><span class="brand-mark">س</span><span><strong>نگهبان ایمنی</strong><small>مدیریت تجهیزات کارخانه</small></span></a>
     <div class="nav-caption">مدیریت</div>
     <nav class="main-nav" aria-label="ناوبری اصلی">
-      {% for item in nav_items %}<a class="nav-link {% if request.resolver_match.url_name == item.1 %}active{% endif %}" href="{% url item.1 %}"><span class="nav-icon" aria-hidden="true">{{ item.2 }}</span>{{ item.0 }}</a>{% endfor %}
+      {% for item in nav_items %}<a class="nav-link {% if request.resolver_match.url_name == item.1 or item.1 == 'people_list' and request.resolver_match.url_name in 'organization_chart organization_add organization_edit organization_cluster_add organization_cluster_edit person_detail person_edit person_new' %}active{% endif %}" href="{% url item.1 %}"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><use href="{% static 'icons/navigation.svg' %}#{{ item.2 }}"></use></svg></span>{{ item.0 }}</a>{% endfor %}
     </nav>
     <div class="sidebar-bottom"><span class="live-dot"></span><span>سامانه فعال</span><span class="sidebar-version">نسخه ۱٫۰</span></div>
   </aside>
@@ -20,7 +21,7 @@
     <header class="topbar">
       <button class="mobile-menu" type="button" aria-label="باز کردن منو" aria-expanded="false" data-menu-toggle>☰</button>
       <div class="topbar-context">سامانه مدیریت ایمنی <span class="topbar-sep">/</span> {% block breadcrumb %}نمای کلی{% endblock %}</div>
-      <div class="topbar-user"><span class="avatar">{{ user.username|slice:":1" }}</span><span class="user-name">{{ user.get_full_name|default:user.username }}</span><form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="text-button" type="submit">خروج <span aria-hidden="true">↗</span></button></form></div>
+      <div class="topbar-user"><button class="theme-toggle" type="button" data-theme-toggle aria-label="تغییر به پوسته تاریک" title="تغییر پوسته"><span class="theme-icon" aria-hidden="true">☾</span><span class="theme-label">پوسته</span></button><span class="avatar">{{ user.username|slice:":1" }}</span><span class="user-name">{{ user.get_full_name|default:user.username }}</span><form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="text-button" type="submit">خروج <span aria-hidden="true">↗</span></button></form></div>
     </header>
     <main class="page-content">
       {% if messages %}<div class="flash-stack" aria-live="polite">{% for message in messages %}<div class="flash {% if message.tags == 'error' %}flash-error{% elif message.tags == 'warning' %}flash-warning{% else %}flash-success{% endif %}"><span>{{ message }}</span><button type="button" class="flash-close" aria-label="بستن" data-dismiss>×</button></div>{% endfor %}</div>{% endif %}
@@ -32,5 +33,5 @@
 </div>
 <div class="mobile-overlay" data-menu-close></div>
 {% else %}{% block guest_content %}{% endblock %}{% endif %}
-<script src="{% static 'js/app.js' %}" defer></script>
+<script src="{% static 'js/app.js' %}?v=7" defer></script>
 </body></html>

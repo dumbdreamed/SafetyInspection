@@ -1,0 +1,59 @@
+{% extends "base.html" %}{% load static %}
+{% block title %}{{ title }}{% endblock %}
+{% block breadcrumb %}<a href="{% url 'people_list' %}">مدیریت پرسنل</a> / <a href="{% url 'organization_chart' %}">چارت سازمانی</a> / {{ title }}{% endblock %}
+{% block content %}
+<div class="detail-back"><a href="{% url 'organization_chart' %}">→ بازگشت به چارت</a></div>
+<div class="page-heading form-heading"><div><span class="eyebrow">مدیریت پرسنل</span><h1>{{ title }}</h1><p class="muted">افراد را از فهرست به جایگاه‌های نمودار بکشید؛ نقش و مدیر مستقیم هر فرد همراه گروه ذخیره می‌شود.</p></div></div>
+<section class="panel form-panel organization-builder-page">
+  <form method="post" novalidate data-org-cluster-form>
+    {% csrf_token %}
+    {{ form.structure }}
+    {{ form.role_labels }}
+    {% if form.non_field_errors %}<div class="form-errors">{{ form.non_field_errors }}</div>{% endif %}
+    {% if form.role_labels.errors %}<div class="form-errors">{{ form.role_labels.errors }}</div>{% endif %}
+    <div class="org-builder-name field" data-field-name="name">
+      <label for="{{ form.name.id_for_label }}">{{ form.name.label }}<span class="required-star">*</span></label>
+      {{ form.name }}
+      {% if form.name.errors %}<div class="field-error">{{ form.name.errors }}</div>{% endif %}
+    </div>
+    <div class="org-builder-note">نقش و مدیر مستقیم روی پرونده هر فرد ذخیره می‌شود و در گروه‌های دیگر چارت نیز اثر دارد. همه اعضای گروه باید در یک جایگاه قرار بگیرند؛ جایگاه‌های خالی هم می‌توانند به‌عنوان پیش‌نویس ذخیره شوند.</div>
+    <div class="org-builder" data-org-builder>
+      <aside class="org-builder-roster">
+        <div class="org-builder-section-heading"><div><strong>فهرست پرسنل</strong><span data-org-roster-count></span></div><span class="org-builder-drag-hint">یک نفر را بکشید یا چند نفر را تیک بزنید</span></div>
+        <label class="org-builder-search-label" for="org-builder-search">جست‌وجوی فرد</label>
+        <input class="field-input" id="org-builder-search" type="search" data-org-builder-search placeholder="نام، عنوان یا کد پرسنلی">
+        <div class="org-builder-bulk">
+          <div class="org-builder-bulk-select"><label><input type="checkbox" data-org-select-visible> انتخاب همه نتایج</label></div>
+          <div class="org-builder-selected-heading"><span class="org-builder-selected-count" data-org-selected-count>۰ نفر انتخاب شده</span><button type="button" class="org-builder-clear-selection" data-org-clear-selection>لغو انتخاب همه</button></div>
+          <div class="org-builder-selected-list" data-org-selected-list aria-live="polite"></div>
+          <label class="org-builder-search-label" for="org-builder-bulk-manager">مدیر مستقیم</label>
+          <select class="field-input" id="org-builder-bulk-manager" data-org-bulk-manager></select>
+          <label class="org-builder-search-label" for="org-builder-bulk-level">نقش افراد انتخاب‌شده</label>
+          <select class="field-input" id="org-builder-bulk-level" data-org-bulk-level><option value="employee">کارمند</option><option value="supervisor">سرپرست</option><option value="middle">مدیر میانی</option></select>
+          <button type="button" class="button button-small button-primary org-builder-add-selected" data-org-add-selected disabled>افزودن انتخاب‌شده‌ها به نمودار</button>
+        </div>
+        <div class="org-builder-roster-list" data-org-roster aria-label="فهرست پرسنل"></div>
+        {% if form.members.errors %}<div class="field-error">{{ form.members.errors }}</div>{% endif %}
+      </aside>
+      <section class="org-builder-design" aria-label="قالب دیداری چارت سازمانی">
+        <div class="org-builder-section-heading"><div><strong>قالب چارت</strong><span>جایگاه‌ها را از ابزار کنار بوم اضافه کنید؛ افراد را بکشید و روی کارت مدیر رها کنید.</span></div><div class="org-builder-tools" aria-label="کنترل‌های بوم"><button type="button" class="button button-small button-outline" data-org-zoom-out aria-label="کوچک‌نمایی">−</button><output data-org-zoom aria-live="polite">۱۰۰٪</output><button type="button" class="button button-small button-outline" data-org-zoom-in aria-label="بزرگ‌نمایی">＋</button><button type="button" class="button button-small button-outline" data-org-builder-fit>نمایش همه</button></div></div>
+        <div class="org-builder-workspace">
+          <aside class="org-builder-role-palette" data-org-role-palette aria-label="ابزار افزودن نقش‌ها">
+            <strong>افزودن جایگاه</strong><span>نام نقش‌ها را ویرایش کنید؛ برای افزودن جایگاه روی دکمه بزنید یا آن را بکشید.</span>
+            <div class="org-builder-role-entry role-top"><label><span>★</span><input type="text" maxlength="40" data-org-role-label-input="top" aria-label="برچسب مدیر ارشد"></label><button type="button" class="org-builder-role-tool" data-org-add-role="top">نمایش جایگاه ریشه</button></div>
+            <div class="org-builder-role-entry role-middle"><label><span>▰</span><input type="text" maxlength="40" data-org-role-label-input="middle" aria-label="برچسب مدیر میانی"></label><button type="button" class="org-builder-role-tool" draggable="true" data-org-add-role="middle">＋ افزودن جایگاه</button></div>
+            <div class="org-builder-role-entry role-supervisor"><label><span>◆</span><input type="text" maxlength="40" data-org-role-label-input="supervisor" aria-label="برچسب سرپرست"></label><button type="button" class="org-builder-role-tool" draggable="true" data-org-add-role="supervisor">＋ افزودن جایگاه</button></div>
+            <div class="org-builder-role-entry role-employee"><label><span>●</span><input type="text" maxlength="40" data-org-role-label-input="employee" aria-label="برچسب کارمند"></label><button type="button" class="org-builder-role-tool" draggable="true" data-org-add-role="employee">＋ افزودن جایگاه</button></div>
+            <div class="org-builder-role-entry role-other"><label><span>＋</span><input type="text" maxlength="40" data-org-role-label-input="other" aria-label="برچسب نقش دیگر"></label><button type="button" class="org-builder-role-tool" draggable="true" data-org-add-role="other">＋ افزودن جایگاه</button></div>
+          </aside>
+          <div class="org-builder-stage" data-org-builder-stage tabindex="0" aria-label="قالب سلسله‌مراتب سازمانی"><div class="org-builder-world" data-org-builder-world></div></div>
+        </div>
+        <p class="org-builder-feedback" data-org-builder-feedback aria-live="polite"></p>
+      </section>
+    </div>
+    <div class="org-builder-native-members" hidden>{{ form.members }}</div>
+    <div class="form-actions"><a class="button button-quiet" href="{% url back_url %}">انصراف</a><button class="button button-primary" type="submit">{{ submit_label|default:"ذخیره گروه و چارت" }} <span>←</span></button></div>
+  </form>
+</section>
+<script src="{% static 'js/organization_builder.js' %}?v=6" defer></script>
+{% endblock %}

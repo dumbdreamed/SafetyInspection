@@ -4,8 +4,33 @@ from core.models import (ChecklistItem, ChecklistTemplate, DocumentCategory,
                          EquipmentType, QualificationType)
 
 
-TYPES = ["کامیون", "جرثقیل متحرک", "جرثقیل سقفی", "لیفتراک", "لودر", "تریلی"]
-DOCS = ["مجوز تردد", "بیمه‌نامه", "گواهی معاینه فنی", "گواهی آزمون بار جرثقیل", "گواهی تعمیر و نگهداری", "گواهی‌نامه رانندگی", "گواهی آموزش", "گواهی سلامت شغلی", "مجوز اپراتوری"]
+TYPES = [
+    "کامیون", "جرثقیل متحرک", "جرثقیل سقفی", "لیفتراک", "لودر", "تریلی",
+    "بیل مکانیکی", "بیل بکهو", "تانکر آبپاش", "تراکتور", "تراک میکسر",
+    "پمپ بتن", "گریدر", "بابکت", "بولدوزر", "جرثقیل", "غلطک", "فینیشر", "حفار",
+]
+TYPE_ICONS = {
+    "کامیون": "🚚",
+    "جرثقیل متحرک": "🏗️",
+    "جرثقیل سقفی": "🏭",
+    "لیفتراک": "📦",
+    "لودر": "🪣",
+    "تریلی": "🚛",
+    "بیل مکانیکی": "⛏️",
+    "بیل بکهو": "🛠️",
+    "تانکر آبپاش": "💧",
+    "تراکتور": "🚜",
+    "تراک میکسر": "🌀",
+    "پمپ بتن": "🧱",
+    "گریدر": "🛣️",
+    "بابکت": "🧰",
+    "بولدوزر": "🚧",
+    "جرثقیل": "🪝",
+    "غلطک": "🛞",
+    "فینیشر": "🛤️",
+    "حفار": "🕳️",
+}
+DOCS = ["مجوز تردد", "بیمه‌نامه", "بیمه شخص ثالث", "بیمه مسئولیت مدنی", "گواهی معاینه فنی", "گواهی آزمون بار جرثقیل", "گواهی تعمیر و نگهداری", "گواهی‌نامه رانندگی", "گواهی آموزش", "گواهی سلامت شغلی", "مجوز اپراتوری"]
 QUALS = ["گواهی‌نامه پایه مرتبط", "مجوز اپراتوری لیفتراک", "گواهی اپراتوری جرثقیل", "گواهی ریگر / علامت‌دهنده", "گواهی سلامت شغلی"]
 CHECKLISTS = {
     "کامیون": ("بازرسی ایمنی کامیون", 0, ["ترمزها", "لاستیک‌ها", "فرمان", "چراغ‌ها و آینه‌ها", "بوق و کمربند ایمنی", "نشتی سیالات", "کپسول آتش‌نشانی و تجهیزات اضطراری"]),
@@ -23,7 +48,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from django.core.management import call_command
         for name in TYPES:
-            EquipmentType.objects.get_or_create(name=name)
+            EquipmentType.objects.update_or_create(name=name, defaults={"icon": TYPE_ICONS[name]})
         for name in DOCS:
             DocumentCategory.objects.get_or_create(name=name, defaults={"expires": True})
         QualificationType.objects.get_or_create(name=QUALS[0], defaults={"required_for_assignment": True})
@@ -35,4 +60,5 @@ class Command(BaseCommand):
             if not template.items.exists():
                 for order, description in enumerate(descriptions, 1):
                     ChecklistItem.objects.create(template=template, section="بازرسی عمومی", description=description, critical=description in CRITICAL, order=order)
+        call_command("seed_safety_checklists", verbosity=0)
         self.stdout.write(self.style.SUCCESS("دسته‌های اولیه فارسی ثبت شدند."))
