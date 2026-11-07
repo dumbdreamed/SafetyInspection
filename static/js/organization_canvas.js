@@ -59,13 +59,25 @@
     const updateFullscreen = (refit = true) => {
       const expanded = document.fullscreenElement === workspace || workspace.classList.contains('is-expanded');
       fullButton?.setAttribute('aria-pressed', String(expanded));
-      if (fullButton) fullButton.textContent = expanded ? 'خروج از تمام‌صفحه' : 'تمام‌صفحه';
+      if (fullButton) {
+        const label = expanded ? 'خروج از تمام‌صفحه' : 'نمایش چارت در تمام‌صفحه';
+        fullButton.setAttribute('aria-label', label);
+        fullButton.title = label;
+        const labelNode = fullButton.querySelector('[data-org-fullscreen-label]');
+        if (labelNode) labelNode.textContent = expanded ? 'خروج از تمام‌صفحه' : 'تمام‌صفحه';
+        else fullButton.textContent = expanded ? 'خروج از تمام‌صفحه' : 'تمام‌صفحه';
+        const iconPath = fullButton.querySelector('svg path');
+        if (iconPath) iconPath.setAttribute('d', expanded ? 'M8 3v5H3M16 3v5h5M3 16h5v5M21 16h-5v5' : 'M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5');
+      }
       if (refit) requestAnimationFrame(fit);
     };
     const fallbackFullscreen = () => { workspace.classList.toggle('is-expanded'); document.body.classList.toggle('organization-expanded', workspace.classList.contains('is-expanded')); updateFullscreen(); };
     on(fullButton, 'click', async () => {
       if (workspace.classList.contains('is-expanded')) { fallbackFullscreen(); return; }
-      if (document.fullscreenElement === workspace) { await document.exitFullscreen(); return; }
+      if (document.fullscreenElement === workspace) {
+        try { await document.exitFullscreen(); } catch (_) { fallbackFullscreen(); }
+        return;
+      }
       try { if (!workspace.requestFullscreen) throw new Error('unsupported'); await workspace.requestFullscreen(); } catch (_) { fallbackFullscreen(); }
     });
     on(document, 'fullscreenchange', () => updateFullscreen());

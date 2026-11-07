@@ -1,6 +1,7 @@
 import json
 
 from django import forms
+from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -91,16 +92,35 @@ class PersonForm(StyledModelForm):
     org_level = forms.ChoiceField(label="سطح سازمانی", choices=OrganizationPosition.Level.choices, initial=OrganizationPosition.Level.EMPLOYEE)
     org_title = forms.CharField(label="عنوان شغلی", max_length=120, required=False, help_text="در صورت خالی‌بودن، عنوان سطح سازمانی استفاده می‌شود.")
     org_manager = forms.ModelChoiceField(label="مدیر یا سرپرست مستقیم", queryset=OrganizationPosition.objects.none(), required=False, help_text="ابتدا سطح مدیریتی یا سرپرستی مدیر را ثبت کنید؛ با انتخاب او، چارت خودکار به‌روزرسانی می‌شود.")
+    account_user = forms.ModelChoiceField(label="حساب ورود چک‌لیست", queryset=get_user_model().objects.none(), required=False, help_text="پیوند حساب کاربری این فرد برای ورود به بخش چک‌لیست‌ها.")
+    create_account = forms.BooleanField(label="ساخت حساب ورود برای این فرد", required=False, help_text="حساب با نقش تکمیل‌کننده چک‌لیست ساخته می‌شود؛ فرد پس از دریافت لینک بازیابی گذرواژه می‌تواند آن را تنظیم کند.")
+    account_username = forms.CharField(
+        label="نام کاربری حساب چک‌لیست", max_length=150, required=False,
+        help_text="نام کاربری به‌صورت خودکار از کد پرسنلی ساخته می‌شود.",
+        widget=forms.TextInput(attrs={"readonly": "readonly", "data-account-username": ""}),
+    )
+    account_active = forms.BooleanField(label="حساب ورود فعال باشد", required=False, initial=True, help_text="حساب غیرفعال نمی‌تواند وارد فضای تکمیل چک‌لیست شود.")
 
     class Meta:
         model = Person
-        exclude = ["created_at"]
+        exclude = ["created_at", "user"]
         widgets = {"notes": forms.Textarea(attrs={"rows": 3})}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["photo"].help_text = "اختیاری؛ فایل تصویری تا ۵ مگابایت."
-        self.order_fields(["full_name", "employee_code", "photo", "org_level", "org_title", "org_manager", "department", "employer", "phone", "emergency_contact", "active", "notes"])
+        User = get_user_model()
+        available_filter = Q(is_superuser=False, person_profile__isnull=True) & ~Q(groups__name__in=["Administrator", "Safety Manager"])
+        if self.instance.pk and self.instance.user_id:
+            available_filter |= Q(pk=self.instance.user_id)
+            self.initial.setdefault("account_user", self.instance.user_id)
+        self.fields["account_user"].queryset = User.objects.filter(available_filter).distinct()
+        self.fields["account_user"].empty_label = "بدون حساب پیوندشده"
+        if self.instance.pk:
+            self.initial.setdefault("account_username", self.instance.employee_code.upper())
+        self.order_fields(["full_name", "employee_code", "photo", "email", "account_user", "create_account", "account_username", "account_active", "org_level", "org_title", "org_manager", "department", "employer", "phone", "emergency_contact", "active", "notes"])
+        if self.instance.pk and self.instance.user_id:
+            self.initial.setdefault("account_active", self.instance.user.is_active)
         position = OrganizationPosition.objects.filter(person_id=self.instance.pk).select_related("manager").first() if self.instance.pk else None
         managers = OrganizationPosition.objects.select_related("person")
         managerial_levels = [OrganizationPosition.Level.TOP, OrganizationPosition.Level.MIDDLE, OrganizationPosition.Level.SUPERVISOR]
@@ -119,8 +139,28 @@ class PersonForm(StyledModelForm):
             raise ValidationError("حجم عکس باید کمتر از ۵ مگابایت باشد.")
         return photo
 
+    def clean_employee_code(self):
+        return (self.cleaned_data.get("employee_code") or "").strip().upper()
+
     def clean(self):
         cleaned = super().clean()
+        employee_code = (cleaned.get("employee_code") or "").strip().upper()
+        cleaned["employee_code"] = employee_code
+        cleaned["account_username"] = employee_code
+        if cleaned.get("create_account"):
+            if cleaned.get("account_user"):
+                self.add_error("account_user", "برای ساخت حساب جدید، حساب پیوندشده را خالی بگذارید.")
+            if not cleaned.get("email"):
+                self.add_error("email", "برای ساخت حساب، رایانامه فرد را وارد کنید.")
+        linked_user = cleaned.get("account_user")
+        if not linked_user and self.instance.pk:
+            linked_user = self.instance.user
+        if cleaned.get("create_account") or cleaned.get("account_user") or (self.instance.pk and self.instance.user_id):
+            username_matches = get_user_model().objects.filter(username__iexact=employee_code)
+            if linked_user:
+                username_matches = username_matches.exclude(pk=linked_user.pk)
+            if username_matches.exists():
+                self.add_error("employee_code", "کد پرسنلی برای نام کاربری حساب دیگری استفاده شده است.")
         level = cleaned.get("org_level")
         if level:
             position = OrganizationPosition.objects.filter(person_id=self.instance.pk).first() if self.instance.pk else None
@@ -368,13 +408,26 @@ class DocumentForm(StyledModelForm):
 class InspectionScheduleForm(StyledModelForm):
     class Meta:
         model = Inspection
-        fields = ["equipment", "template", "inspector", "due_date", "notes"]
-        widgets = {"due_date": forms.DateInput(attrs={"type": "date"}), "notes": forms.Textarea(attrs={"rows": 2})}
+        fields = ["equipment", "template", "inspector", "due_date", "instructions"]
+        widgets = {"due_date": forms.DateInput(attrs={"type": "date"}), "instructions": forms.Textarea(attrs={"rows": 3})}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["equipment"].queryset = Equipment.objects.filter(archived=False)
         self.fields["template"].queryset = ChecklistTemplate.objects.filter(active=True)
+        User = get_user_model()
+        inspector_filter = Q(is_active=True, person_profile__active=True, groups__name="Inspector") & ~Q(groups__name__in=["Administrator", "Safety Manager"])
+        initial_inspector = self.initial.get("inspector")
+        if initial_inspector:
+            inspector_filter |= Q(pk=initial_inspector)
+        self.fields["inspector"].queryset = User.objects.filter(inspector_filter).distinct()
+        def inspector_label(user):
+            try:
+                person = user.person_profile
+            except Person.DoesNotExist:
+                person = None
+            return f"{person.full_name} · {user.username}" if person else user.get_full_name() or user.username
+        self.fields["inspector"].label_from_instance = inspector_label
 
     def clean(self):
         cleaned = super().clean()
@@ -384,11 +437,50 @@ class InspectionScheduleForm(StyledModelForm):
         return cleaned
 
 
+class InspectionReassignmentForm(StyledModelForm):
+    class Meta:
+        model = Inspection
+        fields = ["inspector", "due_date"]
+        widgets = {"due_date": forms.DateInput(attrs={"type": "date"})}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        User = get_user_model()
+        inspector_filter = Q(is_active=True, person_profile__active=True, groups__name="Inspector") & ~Q(groups__name__in=["Administrator", "Safety Manager"])
+        if self.instance.pk and self.instance.inspector_id:
+            inspector_filter |= Q(pk=self.instance.inspector_id)
+        self.fields["inspector"].queryset = User.objects.filter(inspector_filter).distinct()
+        self.fields["inspector"].label_from_instance = lambda user: (
+            f"{user.person_profile.full_name} · {user.username}"
+            if hasattr(user, "person_profile") else user.get_full_name() or user.username
+        )
+
+
+class InspectionDelegationForm(forms.Form):
+    inspector = forms.ModelChoiceField(queryset=get_user_model().objects.none(), label="مسئول تکمیل",
+                                       widget=forms.Select(attrs={"class": INPUT}))
+    due_date = forms.DateField(label="مهلت انجام", widget=forms.DateInput(attrs={"type": "date", "class": INPUT}))
+    instructions = forms.CharField(label="دستور ویژه (اختیاری)", required=False, max_length=2000,
+                                   widget=forms.TextInput(attrs={"class": INPUT, "placeholder": "دستور یکسان برای چک‌لیست‌های انتخاب‌شده"}))
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        User = get_user_model()
+        eligible = Q(is_active=True, person_profile__active=True, groups__name="Inspector") & ~Q(groups__name__in=["Administrator", "Safety Manager"])
+        self.fields["inspector"].queryset = User.objects.filter(eligible).distinct()
+        self.fields["inspector"].label_from_instance = lambda user: (
+            f"{user.person_profile.full_name} · {user.username}"
+            if hasattr(user, "person_profile") else user.get_full_name() or user.username
+        )
+
+
 class FindingForm(StyledModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["assigned_person"].required = True
-        self.fields["assigned_person"].queryset = Person.objects.filter(active=True)
+        self.fields["assigned_person"].queryset = Person.objects.filter(
+            active=True, user__is_active=True, user__groups__name="Inspector"
+        ).exclude(user__groups__name__in=["Administrator", "Safety Manager"]).distinct()
         self.fields["due_date"].required = True
 
     def save(self, commit=True):

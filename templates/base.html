@@ -2,15 +2,15 @@
 <html lang="fa" dir="rtl">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f5f7f5"><title>{% block title %}بازرسی ایمنی{% endblock %} | بازرسی ایمنی</title>
-  <script>try{const saved=localStorage.getItem('safetyinspection-theme');const dark=saved?saved==='dark':matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.dataset.theme=dark?'dark':'light';document.querySelector('meta[name="theme-color"]')?.setAttribute('content',dark?'#090c12':'#f5f7f5')}catch(e){document.documentElement.dataset.theme='light'}</script>
-  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=24">
+  <meta name="theme-color" content="#f3f5f9"><title>{% block title %}سامانه ایمنی پایش ماشین آلات{% endblock %} | سامانه ایمنی پایش ماشین آلات</title>
+  <script>try{const saved=localStorage.getItem('safetyinspection-theme');const dark=saved?saved==='dark':matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.dataset.theme=dark?'dark':'light';document.querySelector('meta[name="theme-color"]')?.setAttribute('content',dark?'#090c12':'#f3f5f9')}catch(e){document.documentElement.dataset.theme='light'}</script>
+  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=39">
 </head>
 <body class="{% if can_manage %}role-manager{% else %}role-regular{% endif %}">
 {% if user.is_authenticated %}
 <div class="app-shell">
   <aside class="sidebar" id="sidebar">
-    <a class="brand" href="{% url 'dashboard' %}"><span class="brand-mark">س</span><span><strong>نگهبان ایمنی</strong><small>مدیریت تجهیزات کارخانه</small></span></a>
+    <a class="brand" href="{% url 'dashboard' %}"><span class="brand-mark">س</span><span><strong>سامانه ایمنی پایش ماشین آلات</strong></span></a>
     <div class="nav-caption">مدیریت</div>
     <nav class="main-nav" aria-label="ناوبری اصلی">
       {% for item in nav_items %}<a class="nav-link {% if request.resolver_match.url_name == item.1 or item.1 == 'people_list' and request.resolver_match.url_name in 'organization_chart organization_add organization_edit organization_cluster_add organization_cluster_edit person_detail person_edit person_new' %}active{% endif %}" href="{% url item.1 %}"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><use href="{% static 'icons/navigation.svg' %}#{{ item.2 }}"></use></svg></span>{{ item.0 }}</a>{% endfor %}
@@ -33,5 +33,5 @@
 </div>
 <div class="mobile-overlay" data-menu-close></div>
 {% else %}{% block guest_content %}{% endblock %}{% endif %}
-<script src="{% static 'js/app.js' %}?v=8" defer></script>
+<script src="{% static 'js/app.js' %}?v=12" defer></script>
 </body></html>

@@ -32,6 +32,7 @@ class DomainSetUpMixin:
         return Equipment.objects.create(asset_code=code, name="کامیون حمل مواد", equipment_type=type_)
 
 
+@override_settings(SECURE_SSL_REDIRECT=False, STORAGES={"default": {"BACKEND": "django.core.files.storage.FileSystemStorage"}, "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"}})
 class AccessAndDocumentTests(DomainSetUpMixin, TestCase):
     def setUp(self):
         self.equipment = self.make_equipment()
@@ -79,12 +80,13 @@ class AccessAndDocumentTests(DomainSetUpMixin, TestCase):
         self.assertEqual(rows["جرثقیل نمونه"], 0)
 
 
+@override_settings(SECURE_SSL_REDIRECT=False, STORAGES={"default": {"BACKEND": "django.core.files.storage.FileSystemStorage"}, "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"}})
 class AssignmentAndInspectionTests(DomainSetUpMixin, TransactionTestCase):
     def setUp(self):
         self.equipment = self.make_equipment("CR-014")
         self.manager = self.make_user("manager-one", "Safety Manager")
         self.inspector = self.make_user("inspector-one", "Inspector")
-        self.person = Person.objects.create(employee_code="OP-014", full_name="اپراتور نمونه")
+        self.person = Person.objects.create(employee_code="OP-014", full_name="اپراتور نمونه", user=self.inspector)
 
     def test_required_verified_qualification_is_checked_on_assignment(self):
         required = QualificationType.objects.create(name="گواهی رانندگی", required_for_assignment=True)
@@ -115,7 +117,8 @@ class AssignmentAndInspectionTests(DomainSetUpMixin, TransactionTestCase):
         schedule = Inspection.objects.create(equipment=self.equipment, template=template, inspector=self.inspector,
                                              due_date=date.today(), template_snapshot=[{"id": item.pk, "description": item.description, "critical": True}])
         client = Client(); client.force_login(self.inspector)
-        payload = {f"result_{item.pk}": "fail", f"comment_{item.pk}": "نقص در ترمز"}
+        payload = {f"result_{item.pk}": "fail", f"comment_{item.pk}": "نقص در ترمز",
+                   f"assigned_{item.pk}": str(self.person.pk), f"due_{item.pk}": (date.today() + timedelta(days=3)).isoformat()}
         response = client.post(reverse("inspection_complete", args=[schedule.pk]), payload)
         self.assertEqual(response.status_code, 302)
         schedule.refresh_from_db()
@@ -152,15 +155,23 @@ class PersistentSnapshotTests(TransactionTestCase):
                 backup_database()
                 backup = root / "backups" / "latest.sqlite3"
                 self.assertTrue(backup.exists())
-                self.assertEqual(sqlite3.connect(backup).execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                backup_connection = sqlite3.connect(backup)
+                try:
+                    self.assertEqual(backup_connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                finally:
+                    backup_connection.close()
             with override_settings(PERSISTENCE_DIR=root, DATABASES={"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": str(target_db)}}):
                 self.assertTrue(restore_database())
-                names = {row[0] for row in sqlite3.connect(target_db).execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                restored_connection = sqlite3.connect(target_db)
+                try:
+                    names = {row[0] for row in restored_connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                finally:
+                    restored_connection.close()
                 self.assertIn("core_equipment", names)
 
 
 class EphemeralDeploymentTests(TestCase):
-    @override_settings(DEBUG=False, PERSISTENCE_CONFIRMED=False)
+    @override_settings(DEBUG=False, PERSISTENCE_CONFIRMED=False, SECURE_SSL_REDIRECT=False)
     def test_health_check_accepts_ephemeral_storage_and_reports_it(self):
         response = Client().get("/health/")
         self.assertEqual(response.status_code, 200)

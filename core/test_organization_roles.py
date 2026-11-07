@@ -10,7 +10,7 @@ from .demo_organization import seed_demo_organization
 from .models import Area, Department, Equipment, EquipmentType, Finding, OrganizationCluster, OrganizationPosition, Person
 
 
-@override_settings(PERSISTENCE_CONFIRMED=False)
+@override_settings(PERSISTENCE_CONFIRMED=False, SECURE_SSL_REDIRECT=False, STORAGES={"default": {"BACKEND": "django.core.files.storage.FileSystemStorage"}, "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"}})
 class AutomaticOrganizationTests(TestCase):
     def setUp(self):
         self.admin = get_user_model().objects.create_superuser(username="org-admin", password="test-password")

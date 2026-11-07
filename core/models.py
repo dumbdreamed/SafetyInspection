@@ -119,7 +119,10 @@ class Equipment(models.Model):
     def condition(self):
         if self.status == self.Status.STOPPED or self.open_findings.filter(blocks_operation=True).exists():
             return "خارج از سرویس", "danger"
-        latest = self.inspections.filter(status=Inspection.Status.COMPLETED).order_by("-completed_at", "-pk").first()
+        latest = self.inspections.filter(
+            status=Inspection.Status.COMPLETED,
+            review_state=Inspection.ReviewState.APPROVED,
+        ).order_by("-completed_at", "-pk").first()
         if latest and latest.outcome == Inspection.Outcome.FAIL:
             return "بازرسی مردود", "danger"
         if self.status == self.Status.SERVICE:
@@ -135,7 +138,11 @@ class Equipment(models.Model):
         ).values("category_id")
         if required_categories.exclude(id__in=valid_categories).exists():
             return "مدرک الزامی ناقص", "warning"
-        if not self.inspections.filter(status=Inspection.Status.COMPLETED, outcome__in=[Inspection.Outcome.PASS, Inspection.Outcome.CONDITIONAL]).exists():
+        if not self.inspections.filter(
+            status=Inspection.Status.COMPLETED,
+            review_state=Inspection.ReviewState.APPROVED,
+            outcome__in=[Inspection.Outcome.PASS, Inspection.Outcome.CONDITIONAL],
+        ).exists():
             return "بازرسی‌نشده", "muted"
         return "فعال", "success"
 
@@ -143,6 +150,8 @@ class Equipment(models.Model):
 class Person(models.Model):
     employee_code = models.CharField("کد پرسنلی / پیمانکاری", max_length=40, unique=True)
     full_name = models.CharField("نام و نام خانوادگی", max_length=160)
+    email = models.EmailField("رایانامه", blank=True)
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="person_profile", verbose_name="حساب کاربری چک‌لیست")
     photo = models.ImageField("عکس پروفایل", upload_to="person-photos/", blank=True)
     employer = models.CharField("شرکت / پیمانکار", max_length=120, blank=True)
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="واحد")
@@ -430,16 +439,30 @@ class Inspection(models.Model):
         PASS = "pass", "قبول"
         CONDITIONAL = "conditional", "قبول مشروط"
         FAIL = "fail", "مردود"
+    class ReviewState(models.TextChoices):
+        ASSIGNED = "assigned", "تخصیص‌یافته"
+        DRAFT = "draft", "پیش‌نویس"
+        SUBMITTED = "submitted", "در انتظار بررسی مدیر"
+        APPROVED = "approved", "تأییدشده"
+        RETURNED = "returned", "نیازمند اصلاح"
+        CANCELLED = "cancelled", "لغوشده"
 
     equipment = models.ForeignKey(Equipment, on_delete=models.PROTECT, related_name="inspections", verbose_name="تجهیز")
     template = models.ForeignKey(ChecklistTemplate, on_delete=models.PROTECT, related_name="inspections", verbose_name="الگو")
     inspector = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="inspections", verbose_name="بازرس")
     due_date = models.DateField("تاریخ برنامه‌ریزی‌شده")
     status = models.CharField("وضعیت", max_length=12, choices=Status.choices, default=Status.SCHEDULED)
+    review_state = models.CharField("وضعیت بررسی مدیر", max_length=12, choices=ReviewState.choices, default=ReviewState.ASSIGNED)
     outcome = models.CharField("نتیجه", max_length=12, choices=Outcome.choices, blank=True)
     meter_value = models.PositiveIntegerField("کارکرد هنگام بازرسی", null=True, blank=True)
-    notes = models.TextField("یادداشت")
+    notes = models.TextField("یادداشت", blank=True)
+    instructions = models.TextField("دستورالعمل انجام بازرسی", blank=True)
     completed_at = models.DateTimeField("زمان تکمیل", null=True, blank=True)
+    submitted_at = models.DateTimeField("زمان ارسال برای بررسی", null=True, blank=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="reviewed_inspections", verbose_name="بررسی‌کننده")
+    reviewed_at = models.DateTimeField("زمان بررسی مدیر", null=True, blank=True)
+    review_note = models.TextField("یادداشت بررسی", blank=True)
+    draft_data = models.JSONField("پیش‌نویس پاسخ‌ها", default=dict, blank=True)
     template_snapshot = models.JSONField("نسخه چک‌لیست", default=list, blank=True)
     threshold_snapshot = models.PositiveSmallIntegerField("آستانه رد ثبت‌شده", default=20)
     failed_weight_percent = models.DecimalField("درصد وزن مردود", max_digits=5, decimal_places=2, null=True, blank=True)
@@ -490,11 +513,13 @@ class Finding(models.Model):
 
     equipment = models.ForeignKey(Equipment, on_delete=models.PROTECT, related_name="findings", verbose_name="تجهیز")
     inspection = models.ForeignKey(Inspection, on_delete=models.PROTECT, null=True, blank=True, related_name="findings", verbose_name="بازرسی مرتبط")
+    source_response = models.OneToOneField("InspectionResponse", on_delete=models.SET_NULL, null=True, blank=True, related_name="finding", verbose_name="پاسخ ایجادکننده نقص")
     description = models.TextField("شرح نقص")
     severity = models.CharField("شدت", max_length=10, choices=Severity.choices, default=Severity.MEDIUM)
     blocks_operation = models.BooleanField("توقف بهره‌برداری", default=False)
     assigned_to = models.CharField("مسئول پیگیری", max_length=120, blank=True)
     assigned_person = models.ForeignKey(Person, on_delete=models.PROTECT, null=True, blank=True, related_name="assigned_findings", verbose_name="مسئول رفع نقص")
+    assigned_user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="assigned_findings", verbose_name="حساب کاربری مسئول")
     due_date = models.DateField("مهلت اصلاح", null=True, blank=True)
     status = models.CharField("وضعیت اقدام", max_length=10, choices=Status.choices, default=Status.OPEN)
     resolution = models.TextField("شرح رفع نقص", blank=True)

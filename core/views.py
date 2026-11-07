@@ -1,12 +1,17 @@
 import csv
 import io
 import json
+import secrets
+import smtplib
 from datetime import timedelta
 from decimal import Decimal
 from functools import wraps
 
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.forms import PasswordResetForm
+from django.contrib.auth.models import Group
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Count, Q, Exists, OuterRef
@@ -20,7 +25,7 @@ from django.utils.dateparse import parse_date
 from django.views.decorators.http import require_GET, require_POST
 
 from .forms import (AssignmentForm, DocumentForm, EquipmentForm, EquipmentTypeForm, FindingCloseForm,
-                    InspectionScheduleForm, MaintenanceForm, OrganizationClusterForm, OrganizationPositionForm, PersonForm, QualificationForm)
+                    InspectionDelegationForm, InspectionReassignmentForm, InspectionScheduleForm, MaintenanceForm, OrganizationClusterForm, OrganizationPositionForm, PersonForm, QualificationForm)
 from .equipment_sheets import EQUIPMENT_SHEET_PROFILES
 from .models import (Area, Assignment, AuditLog, ChecklistItem, ChecklistTemplate, Department, Document,
                      DocumentCategory, Equipment, EquipmentType, Finding, Inspection, InspectionResponse,
@@ -37,6 +42,25 @@ def can_edit(user):
 
 def can_manage(user):
     return user.is_superuser or user.groups.filter(name__in=MANAGER_GROUPS).exists()
+
+
+def is_checklist_filler(user):
+    return user.is_authenticated and not can_manage(user) and user.groups.filter(name="Inspector").exists()
+
+
+def checklist_assignees():
+    return Person.objects.filter(
+        active=True, user__is_active=True, user__groups__name="Inspector"
+    ).exclude(user__groups__name__in=["Administrator", "Safety Manager"]).distinct()
+
+
+def deny_checklist_filler(view):
+    @wraps(view)
+    def wrapped(request, *args, **kwargs):
+        if request.user.is_authenticated and is_checklist_filler(request.user):
+            raise PermissionDenied("این بخش در فضای کاری مسئول تکمیل چک‌لیست در دسترس نیست.")
+        return view(request, *args, **kwargs)
+    return wrapped
 
 
 def require_edit(view):
@@ -63,8 +87,39 @@ def record_event(user, action, obj, details=""):
     AuditLog.objects.create(actor=user, action=action, entity=obj._meta.verbose_name, entity_id=obj.pk, details=details[:1000])
 
 
+def inspection_is_delegatable(inspection):
+    if inspection.review_state in [Inspection.ReviewState.ASSIGNED, Inspection.ReviewState.DRAFT, Inspection.ReviewState.RETURNED]:
+        return inspection.status != Inspection.Status.CANCELLED
+    return (
+        inspection.review_state == Inspection.ReviewState.APPROVED
+        and inspection.status == Inspection.Status.COMPLETED
+        and not inspection.equipment.archived
+        and inspection.template.active
+    )
+
+
 @login_required
 def dashboard(request):
+    if is_checklist_filler(request.user):
+        today = timezone.localdate()
+        inspections = Inspection.objects.filter(inspector=request.user).select_related("equipment", "template").order_by("due_date")
+        assigned = inspections.filter(review_state__in=[Inspection.ReviewState.ASSIGNED, Inspection.ReviewState.DRAFT, Inspection.ReviewState.RETURNED])
+        findings = Finding.objects.filter(Q(assigned_user=request.user) | Q(assigned_person__user=request.user)).exclude(
+            status=Finding.Status.CLOSED
+        ).select_related("equipment", "inspection", "assigned_person").order_by("due_date", "-created_at")
+        return render(request, "core/filler_dashboard.html", {
+            "assigned_inspections": assigned,
+            "submitted_inspections": inspections.filter(review_state=Inspection.ReviewState.SUBMITTED),
+            "approved_inspections": inspections.filter(review_state=Inspection.ReviewState.APPROVED).order_by("-reviewed_at")[:5],
+            "approved_inspection_count": inspections.filter(review_state=Inspection.ReviewState.APPROVED).count(),
+            "overdue_inspection_count": assigned.filter(due_date__lt=today).count(),
+            "due_soon_inspection_count": assigned.filter(due_date__gte=today, due_date__lte=today + timedelta(days=7)).count(),
+            "returned_inspection_count": inspections.filter(review_state=Inspection.ReviewState.RETURNED).count(),
+            "findings": findings[:6], "open_finding_count": findings.count(),
+            "overdue_finding_count": findings.filter(due_date__lt=today).count(),
+            "today": today,
+            "person": Person.objects.filter(user=request.user).first(),
+        })
     today = timezone.localdate()
     equipment = Equipment.objects.filter(archived=False).select_related("equipment_type", "area", "department")
     people = Person.objects.filter(active=True)
@@ -88,7 +143,11 @@ def dashboard(request):
         by_type = equipment.values("equipment_type_id", "equipment_type__name", "equipment_type__icon").annotate(
             total=Count("id")
         ).order_by("equipment_type__name")
-    scheduled = inspections.filter(equipment_id__in=ids, status=Inspection.Status.SCHEDULED)
+    scheduled = inspections.filter(
+        equipment_id__in=ids,
+        status__in=[Inspection.Status.SCHEDULED, Inspection.Status.PROGRESS],
+        review_state__in=[Inspection.ReviewState.ASSIGNED, Inspection.ReviewState.DRAFT, Inspection.ReviewState.RETURNED],
+    )
     findings = Finding.objects.filter(equipment_id__in=ids).exclude(status=Finding.Status.CLOSED)
     docs = Document.objects.filter(equipment_id__in=ids, superseded_by__isnull=True)
     due_docs = docs.filter(expires_on__isnull=False, expires_on__lte=today + timedelta(days=30))
@@ -112,8 +171,10 @@ def dashboard(request):
     equipment_status_counts = dict(
         equipment.values("status").annotate(total=Count("id")).values_list("status", "total")
     )
+    approved_inspections = scoped_inspections.filter(review_state=Inspection.ReviewState.APPROVED)
+    pending_review_total = scoped_inspections.filter(review_state=Inspection.ReviewState.SUBMITTED).count()
     outcome_counts = dict(
-        scoped_inspections.filter(
+        approved_inspections.filter(
             status=Inspection.Status.COMPLETED,
             outcome__in=[key for key, _ in Inspection.Outcome.choices],
         )
@@ -129,7 +190,7 @@ def dashboard(request):
     month_starts.reverse()
     trend_counts = {
         (row["month"].year, row["month"].month): row["total"]
-        for row in scoped_inspections.filter(
+        for row in approved_inspections.filter(
             status=Inspection.Status.COMPLETED,
             completed_at__date__gte=month_starts[0],
             completed_at__date__lte=today,
@@ -161,10 +222,12 @@ def dashboard(request):
         .values("status").annotate(total=Count("id")).values_list("status", "total")
     )
     context = {
+        "can_manage": can_manage(request.user),
         "equipment_total": equipment.count(), "by_type": by_type,
         "available_total": equipment.filter(status=Equipment.Status.ACTIVE).exclude(findings__blocks_operation=True, findings__status__in=[Finding.Status.OPEN, Finding.Status.PROGRESS, Finding.Status.VERIFY]).distinct().count(),
         "stopped_total": equipment.filter(Q(status__in=[Equipment.Status.STOPPED, Equipment.Status.SERVICE]) | Q(findings__blocks_operation=True, findings__status__in=[Finding.Status.OPEN, Finding.Status.PROGRESS, Finding.Status.VERIFY])).distinct().count(),
-        "uninspected_total": equipment.exclude(id__in=Inspection.objects.filter(status=Inspection.Status.COMPLETED, outcome__in=[Inspection.Outcome.PASS, Inspection.Outcome.CONDITIONAL]).values("equipment_id")).count(),
+        "uninspected_total": equipment.exclude(id__in=Inspection.objects.filter(status=Inspection.Status.COMPLETED, review_state=Inspection.ReviewState.APPROVED, outcome__in=[Inspection.Outcome.PASS, Inspection.Outcome.CONDITIONAL]).values("equipment_id")).count(),
+        "pending_review_total": pending_review_total,
         "overdue_total": scheduled.filter(due_date__lt=today).count(),
         "due_week": scheduled.filter(due_date__gte=today, due_date__lte=today + timedelta(days=7)).count(),
         "due_month": scheduled.filter(due_date__gte=today, due_date__lte=today + timedelta(days=30)).count(),
@@ -175,7 +238,7 @@ def dashboard(request):
         "active_people": scoped_people.count(),
         "upcoming": scheduled.filter(due_date__gte=today).order_by("due_date")[:8],
         "alerts": list(scheduled.filter(due_date__lt=today).order_by("due_date")[:4]) + list(findings.filter(severity=Finding.Severity.CRITICAL)[:4]),
-        "recent": Inspection.objects.filter(status=Inspection.Status.COMPLETED).select_related("equipment", "inspector").order_by("-completed_at")[:6],
+        "recent": Inspection.objects.filter(status=Inspection.Status.COMPLETED, review_state=Inspection.ReviewState.APPROVED).select_related("equipment", "inspector").order_by("-completed_at")[:6],
         "areas": Area.objects.all(), "types": EquipmentType.objects.filter(active=True), "selected_area": area_id, "selected_type": type_id, "q": q,
         "chart_max": max([item["total"] for item in by_type] or [1]),
         "status_chart": status_chart,
@@ -191,6 +254,7 @@ def dashboard(request):
     return render(request, "core/dashboard.html", context)
 
 
+@deny_checklist_filler
 @login_required
 def equipment_list(request):
     qs = Equipment.objects.filter(archived=False).select_related("equipment_type")
@@ -233,6 +297,7 @@ def equipment_edit(request, pk=None):
     return render(request, "core/form.html", {"form": form, "title": "ویرایش تجهیز" if obj else "ثبت تجهیز", "back_url": "equipment_list", "submit_label": "ذخیره تجهیز", "equipment_field_profiles": profiles})
 
 
+@deny_checklist_filler
 @login_required
 def equipment_detail(request, pk):
     item = get_object_or_404(Equipment.objects.select_related("equipment_type", "area", "department"), pk=pk)
@@ -241,7 +306,13 @@ def equipment_detail(request, pk):
     sheet_fields = EQUIPMENT_SHEET_PROFILES.get(item.equipment_type.name, set())
     checklist = ChecklistTemplate.objects.filter(equipment_type=item.equipment_type, active=True, name__startswith="چک‌لیست ایمنی پیشنهادی").prefetch_related("items").first()
     checks = list(checklist.items.all()) if checklist else []
-    latest_inspection = item.inspections.filter(status=Inspection.Status.COMPLETED).order_by("-completed_at", "-pk").first()
+    latest_inspection = item.inspections.filter(
+        status=Inspection.Status.COMPLETED,
+        review_state=Inspection.ReviewState.APPROVED,
+    ).order_by("-completed_at", "-pk").first()
+    pending_inspection = item.inspections.filter(
+        review_state=Inspection.ReviewState.SUBMITTED,
+    ).order_by("-submitted_at", "-pk").first()
     return render(request, "core/equipment_detail.html", {
         "item": item,
         "sheet_fields": sheet_fields,
@@ -249,6 +320,7 @@ def equipment_detail(request, pk):
         "checklist_items": checks,
         "checklist_critical_count": sum(1 for check in checks if check.critical),
         "latest_inspection": latest_inspection,
+        "pending_inspection": pending_inspection,
         "assignments": item.assignments.filter(Q(ends_on__isnull=True) | Q(ends_on__gte=active_today)).select_related("person"),
         "documents": item.documents.select_related("category").all(),
         "third_party_insurance": documents.filter(category__name__icontains="ثالث").order_by("-uploaded_at").first(),
@@ -272,6 +344,7 @@ def equipment_archive(request, pk):
     return redirect("equipment_list")
 
 
+@deny_checklist_filler
 @login_required
 def people_list(request):
     qs = Person.objects.select_related("organization_position__manager__person").prefetch_related("qualifications").annotate(active_assignments=Count("assignments", filter=Q(assignments__ends_on__isnull=True) | Q(assignments__ends_on__gte=timezone.localdate()), distinct=True))
@@ -289,6 +362,45 @@ def person_edit(request, pk=None):
             list(OrganizationPosition.objects.select_for_update().values_list("pk", flat=True))
         if form.is_valid():
             person = form.save()
+            User = get_user_model()
+            if form.cleaned_data.get("create_account"):
+                user = User.objects.create_user(
+                    username=form.cleaned_data["account_username"].strip(),
+                    first_name=person.full_name[:150],
+                    email=person.email,
+                    password=secrets.token_urlsafe(40),
+                    is_active=bool(form.cleaned_data.get("account_active") and person.active),
+                )
+                inspector_group, _ = Group.objects.get_or_create(name="Inspector")
+                user.groups.add(inspector_group)
+                person.user = user
+                person.save(update_fields=["user"])
+                reset_form = PasswordResetForm({"email": person.email})
+                if reset_form.is_valid():
+                    try:
+                        reset_form.save(request=request, use_https=request.is_secure(),
+                                        email_template_name="registration/password_reset_email.html",
+                                        subject_template_name="registration/password_reset_subject.txt")
+                    except (OSError, smtplib.SMTPException):
+                        messages.warning(request, "حساب ساخته شد؛ ارسال پیوند گذرواژه ناموفق بود. تنظیمات ایمیل سرور را بررسی کنید تا فرد بتواند گذرواژه خود را تنظیم کند.")
+                    else:
+                        messages.success(request, "حساب ساخته شد و پیوند تنظیم گذرواژه برای رایانامه فرد ارسال شد.")
+                else:
+                    messages.warning(request, "حساب ساخته شد؛ برای ارسال پیوند گذرواژه، رایانامه کاربر را بررسی کنید.")
+            elif form.cleaned_data.get("account_user"):
+                person.user = form.cleaned_data["account_user"]
+                person.user.username = person.employee_code.strip().upper()
+                person.user.first_name = person.full_name[:150]
+                person.user.email = person.email
+                person.user.is_active = bool(form.cleaned_data.get("account_active") and person.active)
+                person.user.save(update_fields=["username", "first_name", "email", "is_active"])
+                inspector_group, _ = Group.objects.get_or_create(name="Inspector")
+                person.user.groups.add(inspector_group)
+                person.save(update_fields=["user"])
+            elif obj and obj.user_id and not form.cleaned_data.get("account_user"):
+                obj.user.groups.remove(*obj.user.groups.filter(name="Inspector"))
+                person.user = None
+                person.save(update_fields=["user"])
             record_event(request.user, "ویرایش شخص" if obj else "ثبت شخص", person)
             messages.success(request, "اطلاعات فرد و جایگاه سازمانی ذخیره شد.")
             if request.GET.get("next") == "organization":
@@ -297,6 +409,7 @@ def person_edit(request, pk=None):
     return render(request, "core/form.html", {"form": form, "title": "ویرایش مشخصات" if obj else "ثبت فرد", "back_url": "people_list", "submit_label": "ذخیره"})
 
 
+@deny_checklist_filler
 @login_required
 def person_photo(request, pk):
     person = get_object_or_404(Person, pk=pk)
@@ -309,6 +422,7 @@ def person_photo(request, pk):
     return response
 
 
+@deny_checklist_filler
 @login_required
 def organization_chart(request):
     all_positions = list(OrganizationPosition.objects.select_related("person", "manager__person").prefetch_related("clusters").annotate(
@@ -495,6 +609,7 @@ def organization_clear(request):
     return redirect("organization_chart")
 
 
+@deny_checklist_filler
 @login_required
 def person_detail(request, pk):
     person = get_object_or_404(Person.objects.prefetch_related("qualifications__documents", "assignments__equipment", "documents"), pk=pk)
@@ -530,7 +645,7 @@ def qualification_new(request):
     return render(request, "core/form.html", {"form": form, "title": "ثبت صلاحیت یا گواهی", "back_url": "people_list", "submit_label": "ثبت صلاحیت"})
 
 
-@require_edit
+@require_manager
 def document_new(request):
     initial = {}
     equipment_id = request.GET.get("equipment", "")
@@ -554,6 +669,7 @@ def document_new(request):
     return render(request, "core/form.html", {"form": form, "title": "بارگذاری مدرک خصوصی", "back_url": "dashboard", "submit_label": "بارگذاری امن", "file_upload": True, "help_text": "فقط یک مورد مرتبط را انتخاب کنید. فایل‌ها فقط با ورود مجاز قابل دریافت‌اند."})
 
 
+@deny_checklist_filler
 @login_required
 def document_download(request, pk):
     doc = get_object_or_404(Document.objects.select_related("person", "qualification__person"), pk=pk)
@@ -572,18 +688,132 @@ def document_download(request, pk):
 
 @login_required
 def inspection_list(request):
-    qs = Inspection.objects.select_related("equipment", "template", "inspector")
-    if request.user.groups.filter(name="Inspector").exists() and not can_manage(request.user):
+    qs = Inspection.objects.select_related("equipment", "template", "inspector", "inspector__person_profile")
+    if is_checklist_filler(request.user):
         qs = qs.filter(inspector=request.user)
     status = request.GET.get("status", "")
     if status in Inspection.Status.values: qs = qs.filter(status=status)
-    if request.GET.get("overdue") == "1": qs = qs.filter(status=Inspection.Status.SCHEDULED, due_date__lt=timezone.localdate())
-    return render(request, "core/inspection_list.html", {"inspections": qs, "selected_status": status, "today": timezone.localdate()})
+    review_state = request.GET.get("review_state", "")
+    if review_state in Inspection.ReviewState.values:
+        qs = qs.filter(review_state=review_state)
+    if request.GET.get("overdue") == "1": qs = qs.filter(status__in=[Inspection.Status.SCHEDULED, Inspection.Status.PROGRESS], due_date__lt=timezone.localdate())
+    for inspection in qs:
+        inspection.can_delegate = inspection_is_delegatable(inspection)
+    today = timezone.localdate()
+    return render(request, "core/inspection_list.html", {
+        "inspections": qs, "selected_status": status, "selected_review_state": review_state,
+        "review_states": Inspection.ReviewState.choices, "today": today,
+        "can_manage": can_manage(request.user),
+        "delegate_form": InspectionDelegationForm(initial={"due_date": today}) if can_manage(request.user) else None,
+        "delegateable_ids": [inspection.pk for inspection in qs if inspection.can_delegate],
+    })
+
+
+@require_manager
+@require_POST
+def inspection_delegate(request):
+    raw_ids = request.POST.getlist("inspection_ids")
+    try:
+        selected_ids = list(dict.fromkeys(int(value) for value in raw_ids))
+    except (TypeError, ValueError):
+        selected_ids = []
+    form = InspectionDelegationForm(request.POST)
+    if not selected_ids:
+        messages.error(request, "ابتدا یک یا چند چک‌لیست قابل واگذاری را انتخاب کنید.")
+        return redirect("inspection_list")
+    if not form.is_valid():
+        messages.error(request, "مسئول یا مهلت واگذاری معتبر نیست؛ مقادیر را بررسی کنید.")
+        return redirect("inspection_list")
+
+    reassignable_states = [Inspection.ReviewState.ASSIGNED, Inspection.ReviewState.DRAFT, Inspection.ReviewState.RETURNED]
+    with transaction.atomic():
+        inspections = list(Inspection.objects.select_for_update().filter(pk__in=selected_ids).select_related("equipment", "template", "inspector"))
+        if len(inspections) != len(selected_ids):
+            messages.error(request, "برخی از چک‌لیست‌های انتخاب‌شده پیدا نشدند؛ فهرست را تازه کنید.")
+            return redirect("inspection_list")
+        if any(not inspection_is_delegatable(item) for item in inspections):
+            messages.error(request, "چک‌لیست‌های در انتظار بررسی یا لغوشده قابل واگذاری نیستند؛ ابتدا وضعیت آن‌ها را تعیین کنید.")
+            return redirect("inspection_list")
+
+        assignee = form.cleaned_data["inspector"]
+        due_date = form.cleaned_data["due_date"]
+        instructions = form.cleaned_data["instructions"].strip()
+        reassigned_count = 0
+        created_count = 0
+        for source in inspections:
+            if source.review_state in reassignable_states:
+                old_inspector, old_due_date = source.inspector, source.due_date
+                source.inspector = assignee
+                source.due_date = due_date
+                if instructions:
+                    source.instructions = instructions
+                source.save(update_fields=["inspector", "due_date", "instructions"])
+                details = f"{old_inspector.username} → {assignee.username}; {old_due_date.isoformat()} → {due_date.isoformat()}"
+                record_event(request.user, "واگذاری مجدد چک‌لیست", source, details)
+                reassigned_count += 1
+                continue
+
+            snapshot = source.template_snapshot or list(source.template.items.values("id", "section", "description", "critical", "weight"))
+            delegated = Inspection(
+                equipment=source.equipment,
+                template=source.template,
+                inspector=assignee,
+                due_date=due_date,
+                status=Inspection.Status.SCHEDULED,
+                review_state=Inspection.ReviewState.ASSIGNED,
+                instructions=instructions or source.instructions,
+                template_snapshot=[dict(item) for item in snapshot],
+                threshold_snapshot=source.threshold_snapshot,
+            )
+            delegated.full_clean()
+            delegated.save()
+            record_event(request.user, "واگذاری مجدد چک‌لیست", delegated,
+                         f"برنامه تازه بر پایه بازرسی تأییدشده {source.pk} برای {assignee.username}")
+            created_count += 1
+
+    messages.success(request, f"واگذاری انجام شد: {reassigned_count} چک‌لیست منتقل و {created_count} برنامه تازه از سوابق تأییدشده ساخته شد.")
+    return redirect("inspection_list")
+
+
+@login_required
+def checklist_workspace(request):
+    if not is_checklist_filler(request.user):
+        raise PermissionDenied("این بخش برای کاربران مسئول تکمیل چک‌لیست است.")
+    inspections = Inspection.objects.filter(inspector=request.user).select_related("equipment", "template")
+    state = request.GET.get("state", "")
+    deadline = request.GET.get("deadline", "")
+    query = request.GET.get("q", "").strip()
+    if state in Inspection.ReviewState.values:
+        inspections = inspections.filter(review_state=state)
+    today = timezone.localdate()
+    if deadline == "overdue":
+        inspections = inspections.filter(due_date__lt=today).exclude(review_state__in=[Inspection.ReviewState.APPROVED, Inspection.ReviewState.CANCELLED])
+    elif deadline == "soon":
+        inspections = inspections.filter(due_date__gte=today, due_date__lte=today + timedelta(days=7)).exclude(review_state__in=[Inspection.ReviewState.APPROVED, Inspection.ReviewState.CANCELLED])
+    if query:
+        inspections = inspections.filter(Q(equipment__name__icontains=query) | Q(equipment__asset_code__icontains=query) | Q(template__name__icontains=query))
+    return render(request, "core/checklist_workspace.html", {
+        "inspections": inspections.order_by("due_date", "-created_at"),
+        "editable_states": [Inspection.ReviewState.ASSIGNED, Inspection.ReviewState.DRAFT, Inspection.ReviewState.RETURNED],
+        "review_states": Inspection.ReviewState.choices, "selected_state": state, "selected_deadline": deadline,
+        "query": query, "today": today,
+    })
+
+
+@require_manager
+def inspection_review_list(request):
+    inspections = Inspection.objects.filter(review_state=Inspection.ReviewState.SUBMITTED).select_related(
+        "equipment", "template", "inspector"
+    ).order_by("submitted_at", "due_date")
+    return render(request, "core/inspection_review_list.html", {"inspections": inspections})
 
 
 @require_manager
 def inspection_new(request):
-    initial = {"inspector": request.user.pk, "due_date": timezone.localdate()}
+    filler = checklist_assignees().select_related("user").first()
+    initial = {"due_date": timezone.localdate()}
+    if filler:
+        initial["inspector"] = filler.user_id
     equipment_id = request.GET.get("equipment", "")
     if equipment_id.isdigit():
         equipment = Equipment.objects.filter(pk=equipment_id, archived=False).select_related("equipment_type").first()
@@ -606,15 +836,185 @@ def inspection_new(request):
 @login_required
 def inspection_detail(request, pk):
     inspection = get_object_or_404(Inspection.objects.select_related("equipment", "template", "inspector"), pk=pk)
-    if request.user.groups.filter(name="Inspector").exists() and not can_manage(request.user) and inspection.inspector_id != request.user.pk:
+    if is_checklist_filler(request.user) and inspection.inspector_id != request.user.pk:
         raise PermissionDenied("بازرسی‌های دیگر بازرس‌ها برای شما در دسترس نیست.")
+    return render(request, "core/inspection_detail.html", inspection_detail_context(request, inspection))
+
+
+def inspection_detail_context(request, inspection, reassignment_form=None):
     items = inspection.template_snapshot or list(inspection.template.items.values("id", "section", "description", "critical", "weight"))
+    has_answer_post = request.method == "POST" and any(key.startswith("result_") for key in request.POST)
     saved = {response.item_id: response for response in inspection.responses.all()}
+    draft = inspection.draft_data or {}
     for item in items:
         response = saved.get(item.get("id"))
-        item["saved_result"] = response.get_result_display() if response else ""
-        item["saved_comment"] = response.comment if response else ""
-    return render(request, "core/inspection_detail.html", {"inspection": inspection, "items": items, "people": Person.objects.filter(active=True), "today": timezone.localdate(), "can_complete": can_edit(request.user) and inspection.status in [Inspection.Status.SCHEDULED, Inspection.Status.PROGRESS] and (can_manage(request.user) or inspection.inspector_id == request.user.pk)})
+        saved_draft = draft.get(str(item.get("id")), {})
+        has_draft = str(item.get("id")) in draft
+        item["saved_result"] = saved_draft.get("result", "") if has_draft else (response.result if response else "")
+        item["saved_comment"] = saved_draft.get("comment", "") if has_draft else (response.comment if response else "")
+        item["saved_measurement"] = saved_draft.get("measurement", "") if has_draft else (response.measurement if response else "")
+        item["saved_assigned_person"] = saved_draft.get("assigned_person", "") if has_draft else (response.finding.assigned_person_id if response and hasattr(response, "finding") else "")
+        item["saved_due_date"] = saved_draft.get("due_date", "") if has_draft else (response.finding.due_date.isoformat() if response and hasattr(response, "finding") and response.finding.due_date else "")
+        if has_answer_post:
+            item_id = str(item.get("id"))
+            item["saved_result"] = request.POST.get(f"result_{item_id}", "")
+            item["saved_comment"] = request.POST.get(f"comment_{item_id}", "")
+            item["saved_measurement"] = request.POST.get(f"measurement_{item_id}", "")
+            item["saved_assigned_person"] = request.POST.get(f"assigned_{item_id}", "")
+            item["saved_due_date"] = request.POST.get(f"due_{item_id}", "")
+    can_fill = (can_manage(request.user) or is_checklist_filler(request.user)) and inspection.inspector_id == request.user.pk and inspection.review_state in [
+        Inspection.ReviewState.ASSIGNED, Inspection.ReviewState.DRAFT, Inspection.ReviewState.RETURNED
+    ] and inspection.status != Inspection.Status.CANCELLED
+    can_manager_edit = can_manage(request.user) and inspection.review_state == Inspection.ReviewState.SUBMITTED
+    audit_events = AuditLog.objects.filter(entity=str(inspection._meta.verbose_name), entity_id=inspection.pk).select_related("actor")[:12]
+    return {
+        "inspection": inspection, "items": items, "people": checklist_assignees(),
+        "today": timezone.localdate(), "can_complete": can_fill or can_manager_edit,
+        "can_fill": can_fill, "can_manager_edit": can_manager_edit,
+        "can_review": can_manage(request.user) and inspection.review_state == Inspection.ReviewState.SUBMITTED,
+        "can_manage": can_manage(request.user),
+        "is_checklist_filler": is_checklist_filler(request.user),
+        "has_answer_post": has_answer_post,
+        "posted_meter_value": request.POST.get("meter_value", "") if has_answer_post else inspection.meter_value,
+        "posted_notes": request.POST.get("notes", "") if has_answer_post else inspection.notes,
+        "posted_review_note": request.POST.get("review_note", inspection.review_note) if request.method == "POST" else inspection.review_note,
+        "reassignment_form": reassignment_form or (InspectionReassignmentForm(instance=inspection) if can_manage(request.user) and inspection.review_state in [Inspection.ReviewState.ASSIGNED, Inspection.ReviewState.DRAFT, Inspection.ReviewState.RETURNED] else None),
+        "audit_events": audit_events,
+    }
+
+
+@require_manager
+@require_POST
+def inspection_reassign(request, pk):
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    with transaction.atomic():
+        inspection = get_object_or_404(Inspection.objects.select_for_update().select_related("inspector"), pk=pk)
+        if inspection.review_state not in [Inspection.ReviewState.ASSIGNED, Inspection.ReviewState.DRAFT, Inspection.ReviewState.RETURNED]:
+            if is_ajax:
+                return JsonResponse({"ok": False, "message": "این چک‌لیست در وضعیت قابل واگذاری مجدد نیست."}, status=409)
+            messages.error(request, "برای حفظ سابقه، چک‌لیست پس از ارسال یا تأیید قابل واگذاری مجدد نیست.")
+            return redirect("inspection_detail", pk=pk)
+        old_inspector, old_due_date = inspection.inspector, inspection.due_date
+        form = InspectionReassignmentForm(request.POST, instance=inspection)
+        if form.is_valid():
+            updated = form.save(commit=False)
+            updated.save(update_fields=["inspector", "due_date"])
+            details = f"{old_inspector.username} → {updated.inspector.username}; {old_due_date.isoformat()} → {updated.due_date.isoformat()}"
+            record_event(request.user, "واگذاری مجدد چک‌لیست", updated, details)
+            success_message = "مسئول و موعد چک‌لیست به‌روزرسانی شد؛ پیش‌نویس و سابقه حفظ شد."
+            if is_ajax:
+                person = Person.objects.filter(user=updated.inspector).first()
+                return JsonResponse({
+                    "ok": True, "message": success_message,
+                    "assignee": f"{person.full_name} · {updated.inspector.username}" if person else updated.inspector.get_full_name() or updated.inspector.username,
+                    "due_date": updated.due_date.isoformat(),
+                })
+        else:
+            if is_ajax:
+                return JsonResponse({"ok": False, "message": "نام مسئول یا موعد معتبر نیست.", "errors": form.errors.get_json_data()}, status=400)
+            return render(request, "core/inspection_detail.html", inspection_detail_context(request, inspection, form), status=400)
+    return redirect("inspection_detail", pk=pk)
+
+
+def _get_posted_answers(request, snapshot, *, allow_partial=False):
+    failures, answers = [], []
+    for item in snapshot:
+        item_id = str(item.get("id", ""))
+        response_value = request.POST.get(f"result_{item_id}", "").strip()
+        comment = request.POST.get(f"comment_{item_id}", "").strip()[:500]
+        measurement = request.POST.get(f"measurement_{item_id}", "").strip()[:80]
+        person_id = request.POST.get(f"assigned_{item_id}", "").strip()
+        due_raw = request.POST.get(f"due_{item_id}", "").strip()
+        if allow_partial and not response_value:
+            answers.append((item, "", comment, measurement, None, None))
+            continue
+        if response_value not in ["pass", "fail", "na"]:
+            return None, "برای همه موارد چک‌لیست یک نتیجه انتخاب کنید."
+        if allow_partial:
+            assigned_person = checklist_assignees().filter(pk=person_id).first() if person_id.isdigit() else None
+            try:
+                due_date = parse_date(due_raw) if due_raw else None
+            except ValueError:
+                due_date = None
+            answers.append((item, response_value, comment, measurement, assigned_person, due_date))
+            continue
+        if response_value == "na" and not comment:
+            return None, "برای موارد غیرقابل‌اعمال توضیح بنویسید."
+        if response_value == "fail" and not comment:
+            return None, "شرح نقص برای موارد مردود الزامی است."
+        assigned_person = checklist_assignees().filter(pk=person_id).first() if person_id.isdigit() else None
+        try:
+            due_date = parse_date(due_raw) if due_raw else None
+        except ValueError:
+            due_date = None
+        if response_value == "fail":
+            if not assigned_person or not due_date:
+                return None, "برای هر نقص، نام مسئول و مهلت معتبر اصلاح را وارد کنید."
+            failures.append((item, comment, assigned_person, due_date))
+        answers.append((item, response_value, comment, measurement, assigned_person, due_date))
+    applicable_weight = sum(item.get("weight", 1) for item, result, *_ in answers if result and result != "na")
+    if not allow_partial and not applicable_weight:
+        return None, "حداقل یک مورد باید قابل‌اعمال باشد."
+    return {"answers": answers, "failures": failures}, ""
+
+
+def _save_inspection_answers(inspection, answers):
+    responses = {}
+    for item, result, comment, measurement, assigned_person, due_date in answers:
+        if not result:
+            continue
+        item_id = item.get("id")
+        response = InspectionResponse.objects.filter(inspection=inspection, item_id=item_id).first()
+        if response is None:
+            response = InspectionResponse(inspection=inspection, item_id=item_id)
+        response.item_text = item["description"]
+        response.critical = item.get("critical", False)
+        response.weight = item.get("weight", 1)
+        response.result = result
+        response.comment = comment
+        response.measurement = measurement
+        response.save()
+        responses[str(item_id)] = response
+    return responses
+
+
+def _create_or_update_inspection_findings(inspection, parsed, responses):
+    for item, comment, person, due_date in parsed["failures"]:
+        response = responses[str(item.get("id"))]
+        finding = Finding.objects.filter(source_response=response).first()
+        defaults = {
+            "equipment": inspection.equipment, "inspection": inspection, "description": f"{item['description']}: {comment}",
+            "severity": Finding.Severity.CRITICAL if item.get("critical") else Finding.Severity.MEDIUM,
+            "blocks_operation": bool(item.get("critical")), "assigned_person": person,
+            "assigned_user": person.user if person.user_id else None, "assigned_to": person.full_name[:120],
+            "due_date": due_date,
+        }
+        if finding:
+            for field, value in defaults.items():
+                setattr(finding, field, value)
+            if finding.status == Finding.Status.CLOSED:
+                finding.status = Finding.Status.OPEN
+                finding.resolution = ""
+                finding.verified_by = None
+                finding.verified_at = None
+            finding.save()
+        else:
+            Finding.objects.create(source_response=response, **defaults)
+
+
+def create_next_inspection(inspection):
+    template = inspection.template
+    if inspection.outcome == Inspection.Outcome.FAIL or not (template.interval_months or template.interval_days):
+        return
+    next_date = (add_months(timezone.localdate(), template.interval_months) if template.interval_months
+                 else timezone.localdate() + timedelta(days=template.interval_days))
+    exists = Inspection.objects.filter(equipment=inspection.equipment, template=template, inspector=inspection.inspector,
+                                       status=Inspection.Status.SCHEDULED, due_date=next_date).exists()
+    if not exists:
+        Inspection.objects.create(equipment=inspection.equipment, template=template, inspector=inspection.inspector,
+                                  due_date=next_date, notes="بازرسی دوره‌ای بعدی",
+                                  template_snapshot=list(template.items.values("id", "section", "description", "critical", "weight")),
+                                  threshold_snapshot=template.rejection_threshold)
 
 
 @require_edit
@@ -622,74 +1022,170 @@ def inspection_detail(request, pk):
 def inspection_complete(request, pk):
     with transaction.atomic():
         inspection = get_object_or_404(Inspection.objects.select_for_update().select_related("template", "equipment", "inspector"), pk=pk)
-        if inspection.status not in [Inspection.Status.SCHEDULED, Inspection.Status.PROGRESS]:
-            messages.error(request, "این بازرسی پیش‌تر نهایی شده است."); return redirect("inspection_detail", pk=pk)
-        if not can_manage(request.user) and inspection.inspector_id != request.user.pk:
+        action = request.POST.get("action", "submit")
+        is_owner = inspection.inspector_id == request.user.pk
+        if not can_manage(request.user) and (not is_checklist_filler(request.user) or not is_owner):
             raise PermissionDenied("فقط بازرس تخصیص‌یافته می‌تواند این بازرسی را ثبت کند.")
+        if action == "manager_save":
+            if not can_manage(request.user) or inspection.review_state != Inspection.ReviewState.SUBMITTED:
+                raise PermissionDenied("ویرایش پاسخ‌های ارسالی برای مدیر مجاز است.")
+        elif not can_manage(request.user) and inspection.review_state not in [Inspection.ReviewState.ASSIGNED, Inspection.ReviewState.DRAFT, Inspection.ReviewState.RETURNED]:
+            messages.error(request, "این چک‌لیست در وضعیت قابل‌ویرایش نیست."); return redirect("inspection_detail", pk=pk)
+        elif can_manage(request.user) and inspection.review_state in [Inspection.ReviewState.SUBMITTED, Inspection.ReviewState.APPROVED, Inspection.ReviewState.CANCELLED]:
+            messages.error(request, "برای تغییر این سابقه، از بخش بازبینی مدیر استفاده کنید."); return redirect("inspection_detail", pk=pk)
         snapshot = inspection.template_snapshot or list(inspection.template.items.values("id", "section", "description", "critical", "weight"))
-        failures, answers = [], []
         if not snapshot:
             messages.error(request, "چک‌لیست خالی قابل نهایی‌کردن نیست."); return redirect("inspection_detail", pk=pk)
-        for item in snapshot:
-            response_value = request.POST.get(f"result_{item['id']}")
-            if response_value not in ["pass", "fail", "na"]:
-                messages.error(request, "برای همه موارد چک‌لیست یک نتیجه انتخاب کنید."); return redirect("inspection_detail", pk=pk)
-            comment = request.POST.get(f"comment_{item['id']}", "").strip()
-            if response_value == "na" and not comment:
-                messages.error(request, "برای موارد غیرقابل‌اعمال توضیح بنویسید."); return redirect("inspection_detail", pk=pk)
-            if response_value == "fail" and not comment:
-                messages.error(request, "شرح نقص برای موارد مردود الزامی است."); return redirect("inspection_detail", pk=pk)
-            if response_value == "fail":
-                person_id = request.POST.get(f"assigned_{item['id']}", "").strip()
-                assigned_person = Person.objects.filter(pk=person_id, active=True).first() if person_id.isdigit() else None
-                try:
-                    due_date = parse_date(request.POST.get(f"due_{item['id']}", "").strip())
-                except ValueError:
-                    due_date = None
-                if not assigned_person or not due_date:
-                    messages.error(request, "برای هر نقص، نام مسئول و مهلت معتبر اصلاح را وارد کنید."); return redirect("inspection_detail", pk=pk)
-                failures.append((item, comment, assigned_person, due_date))
-            answers.append((item, response_value, comment, request.POST.get(f"measurement_{item['id']}", "")[:80]))
+        if action == "save_draft":
+            if not is_owner or not is_checklist_filler(request.user):
+                raise PermissionDenied("ذخیره پیش‌نویس فقط برای بازرس تخصیص‌یافته مجاز است.")
+            parsed, error = _get_posted_answers(request, snapshot, allow_partial=True)
+            if error:
+                messages.error(request, error); return redirect("inspection_detail", pk=pk)
+            inspection.draft_data = {
+                str(item.get("id")): {"result": result, "comment": comment, "measurement": measurement,
+                                       "assigned_person": person.pk if person else "", "due_date": due_date.isoformat() if due_date else ""}
+                for item, result, comment, measurement, person, due_date in parsed["answers"]
+            }
+            inspection.notes = request.POST.get("notes", "")[:3000]
+            inspection.status = Inspection.Status.PROGRESS
+            inspection.review_state = Inspection.ReviewState.DRAFT
+            inspection.save(update_fields=["draft_data", "notes", "status", "review_state"])
+            record_event(request.user, "ذخیره پیش‌نویس چک‌لیست", inspection)
+            messages.success(request, "پیش‌نویس چک‌لیست ذخیره شد.")
+            return redirect("inspection_detail", pk=pk)
+        parsed, error = _get_posted_answers(request, snapshot)
+        if error:
+            messages.error(request, error)
+            return render(request, "core/inspection_detail.html", inspection_detail_context(request, inspection), status=400)
+        answers = parsed["answers"]
+        previous_outcome = inspection.outcome
+        previous_responses = {
+            str(response.item_id): response
+            for response in inspection.responses.all()
+        } if action == "manager_save" else {}
         meter = request.POST.get("meter_value", "").strip()
         if meter and (not meter.isdigit() or int(meter) < 0):
-            messages.error(request, "عدد کارکرد معتبر وارد کنید."); return redirect("inspection_detail", pk=pk)
-        applicable_weight = sum(item.get("weight", 1) for item, result, _, _ in answers if result != "na")
+            messages.error(request, "عدد کارکرد معتبر وارد کنید.")
+            return render(request, "core/inspection_detail.html", inspection_detail_context(request, inspection), status=400)
+        applicable_weight = sum(item.get("weight", 1) for item, result, *_ in answers if result != "na")
         if not applicable_weight:
-            messages.error(request, "حداقل یک مورد باید قابل‌اعمال باشد."); return redirect("inspection_detail", pk=pk)
-        failed_weight = sum(item.get("weight", 1) for item, _, _, _ in failures)
+            messages.error(request, "حداقل یک مورد باید قابل‌اعمال باشد.")
+            return render(request, "core/inspection_detail.html", inspection_detail_context(request, inspection), status=400)
+        failed_weight = sum(item.get("weight", 1) for item, *_ in parsed["failures"])
         percent = Decimal(failed_weight) * 100 / Decimal(applicable_weight)
         threshold = inspection.threshold_snapshot if inspection.template_snapshot else inspection.template.rejection_threshold
-        for item, result, comment, measurement in answers:
-            InspectionResponse.objects.create(inspection=inspection, item_id=item.get("id"), item_text=item["description"], critical=item.get("critical", False), weight=item.get("weight", 1), result=result, comment=comment, measurement=measurement)
+        responses = _save_inspection_answers(inspection, answers)
         inspection.failed_weight_percent = percent
         inspection.threshold_snapshot = threshold
-        inspection.outcome = (Inspection.Outcome.FAIL if any(item.get("critical") for item, _, _, _ in failures) or percent >= threshold
-                              else Inspection.Outcome.CONDITIONAL if failures
+        inspection.outcome = (Inspection.Outcome.FAIL if any(item.get("critical") for item, *_ in parsed["failures"]) or percent >= threshold
+                              else Inspection.Outcome.CONDITIONAL if parsed["failures"]
                               else Inspection.Outcome.PASS)
         inspection.status = Inspection.Status.COMPLETED
         inspection.completed_at = timezone.now()
+        if action != "manager_save":
+            inspection.review_state = Inspection.ReviewState.SUBMITTED
+            inspection.submitted_at = timezone.now()
+            inspection.reviewed_by = None
+            inspection.reviewed_at = None
+            inspection.review_note = ""
         inspection.meter_value = int(meter) if meter else None
         inspection.notes = request.POST.get("notes", "")[:3000]
         inspection.template_snapshot = snapshot
+        inspection.draft_data = {}
         inspection.save()
-        for item, comment, assigned_person, due_date in failures:
-            Finding.objects.create(equipment=inspection.equipment, inspection=inspection,
-                                   description=f"{item['description']}: {comment}",
-                                   severity=Finding.Severity.CRITICAL if item.get("critical") else Finding.Severity.MEDIUM,
-                                   blocks_operation=bool(item.get("critical")), assigned_person=assigned_person, assigned_to=assigned_person.full_name[:120], due_date=due_date)
-        record_event(request.user, "تکمیل بازرسی", inspection, inspection.get_outcome_display())
-        if inspection.outcome != Inspection.Outcome.FAIL and inspection.template.interval_months:
-            next_date = add_months(timezone.localdate(), inspection.template.interval_months)
-            Inspection.objects.create(equipment=inspection.equipment, template=inspection.template, inspector=inspection.inspector, due_date=next_date, notes="بازرسی دوره‌ای بعدی", template_snapshot=list(inspection.template.items.values("id", "section", "description", "critical", "weight")), threshold_snapshot=inspection.template.rejection_threshold)
-        elif inspection.outcome != Inspection.Outcome.FAIL and inspection.template.interval_days:
-            next_date = timezone.localdate() + timedelta(days=inspection.template.interval_days)
-            Inspection.objects.create(equipment=inspection.equipment, template=inspection.template, inspector=inspection.inspector, due_date=next_date, notes="بازرسی دوره‌ای بعدی", template_snapshot=list(inspection.template.items.values("id", "section", "description", "critical", "weight")), threshold_snapshot=inspection.template.rejection_threshold)
-    messages.success(request, "بازرسی نهایی شد و سابقه آن ثبت شد.")
+        _create_or_update_inspection_findings(inspection, parsed, responses)
+        if action == "manager_save":
+            response_changes = []
+            changed_labels = {
+                "result": "نتیجه", "comment": "توضیح", "measurement": "اندازه‌گیری",
+                "assigned_person": "مسئول نقص", "due_date": "مهلت نقص",
+            }
+            for item, result, comment, measurement, assigned_person, due_date in answers:
+                old = previous_responses.get(str(item.get("id")))
+                if old is None:
+                    changed_fields = list(changed_labels.values())
+                else:
+                    new_values = {
+                        "result": result, "comment": comment, "measurement": measurement,
+                        "assigned_person": assigned_person.pk if assigned_person else None,
+                        "due_date": due_date.isoformat() if due_date else None,
+                    }
+                    old_values = {
+                        "result": old.result, "comment": old.comment, "measurement": old.measurement,
+                        "assigned_person": old.finding.assigned_person_id if hasattr(old, "finding") else None,
+                        "due_date": old.finding.due_date.isoformat() if hasattr(old, "finding") and old.finding.due_date else None,
+                    }
+                    changed_fields = [changed_labels[key] for key in changed_labels if old_values[key] != new_values[key]]
+                if changed_fields:
+                    response_changes.append({"item": item.get("description", "")[:100], "fields": changed_fields})
+            change_summary = {
+                "outcome": {"from": previous_outcome, "to": inspection.outcome},
+                "changed_responses": response_changes,
+            }
+            record_event(request.user, "ویرایش پاسخ‌های چک‌لیست", inspection, json.dumps(change_summary, ensure_ascii=False))
+        else:
+            record_event(request.user, "ارسال چک‌لیست برای بازبینی", inspection, inspection.get_outcome_display())
+    messages.success(request, "تغییرات بررسی و ذخیره شد." if action == "manager_save" else "چک‌لیست برای بررسی مدیر ارسال شد.")
+    return redirect("inspection_detail", pk=pk)
+
+
+@require_manager
+@require_POST
+def inspection_review_action(request, pk):
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    message = ""
+    succeeded = False
+    with transaction.atomic():
+        inspection = get_object_or_404(Inspection.objects.select_for_update().select_related("template"), pk=pk)
+        action = request.POST.get("action")
+        if action == "approve" and inspection.review_state == Inspection.ReviewState.SUBMITTED:
+            inspection.review_state = Inspection.ReviewState.APPROVED
+            inspection.reviewed_by = request.user
+            inspection.reviewed_at = timezone.now()
+            inspection.review_note = request.POST.get("review_note", "")[:2000]
+            inspection.save(update_fields=["review_state", "reviewed_by", "reviewed_at", "review_note"])
+            create_next_inspection(inspection)
+            record_event(request.user, "تأیید چک‌لیست", inspection, inspection.get_outcome_display())
+            message, succeeded = "چک‌لیست تأیید شد.", True
+        elif action == "return" and inspection.review_state == Inspection.ReviewState.SUBMITTED:
+            note = request.POST.get("review_note", "").strip()
+            if not note:
+                if is_ajax:
+                    return JsonResponse({"ok": False, "message": "برای بازگرداندن چک‌لیست، دلیل اصلاح را بنویسید."}, status=400)
+                messages.error(request, "برای بازگرداندن چک‌لیست، دلیل اصلاح را بنویسید.")
+                return render(request, "core/inspection_detail.html", inspection_detail_context(request, inspection), status=400)
+            inspection.review_state = Inspection.ReviewState.RETURNED
+            inspection.status = Inspection.Status.PROGRESS
+            inspection.reviewed_by = request.user
+            inspection.reviewed_at = timezone.now()
+            inspection.review_note = note[:2000]
+            inspection.save(update_fields=["review_state", "status", "reviewed_by", "reviewed_at", "review_note"])
+            record_event(request.user, "بازگرداندن چک‌لیست برای اصلاح", inspection, note)
+            message, succeeded = "چک‌لیست برای اصلاح به مسئول آن بازگردانده شد.", True
+        elif action == "cancel" and inspection.review_state != Inspection.ReviewState.APPROVED:
+            inspection.review_state = Inspection.ReviewState.CANCELLED
+            inspection.status = Inspection.Status.CANCELLED
+            inspection.reviewed_by = request.user
+            inspection.reviewed_at = timezone.now()
+            inspection.review_note = request.POST.get("review_note", "")[:2000]
+            inspection.save(update_fields=["review_state", "status", "reviewed_by", "reviewed_at", "review_note"])
+            record_event(request.user, "لغو چک‌لیست", inspection, inspection.review_note)
+            message, succeeded = "چک‌لیست لغو شد و سابقه آن حفظ شد.", True
+        else:
+            message = "این تغییر با وضعیت فعلی چک‌لیست سازگار نیست."
+    if is_ajax:
+        return JsonResponse({
+            "ok": succeeded, "message": message,
+            "review_state": inspection.review_state,
+            "review_state_label": inspection.get_review_state_display(),
+        }, status=200 if succeeded else 400)
+    (messages.success if succeeded else messages.error)(request, message)
     return redirect("inspection_detail", pk=pk)
 
 
 def filtered_findings(params):
-    qs = Finding.objects.select_related("equipment", "inspection", "assigned_person")
+    qs = Finding.objects.select_related("equipment", "inspection", "assigned_person", "assigned_user")
     status = params.get("status", "active")
     if status == "active" or status not in ["all", *Finding.Status.values]:
         qs = qs.exclude(status=Finding.Status.CLOSED)
@@ -722,6 +1218,8 @@ def filtered_findings(params):
 
 @login_required
 def finding_list(request):
+    if is_checklist_filler(request.user):
+        return redirect("my_findings")
     return render(request, "core/finding_list.html", {
         "findings": filtered_findings(request.GET), "filters": request.GET,
         "selected_status": request.GET.get("status", "active"),
@@ -729,9 +1227,22 @@ def finding_list(request):
         "equipment_types": EquipmentType.objects.filter(equipment__findings__isnull=False).distinct(),
         "areas": Area.objects.all(), "drivers": Person.objects.filter(assignments__isnull=False).distinct(),
         "assignees": Person.objects.filter(assigned_findings__isnull=False).distinct(),
-        "people": Person.objects.filter(active=True), "statuses": Finding.Status.choices,
+        "people": checklist_assignees(), "statuses": Finding.Status.choices,
         "severities": Finding.Severity.choices, "equipment_statuses": Equipment.Status.choices,
         "can_edit": can_edit(request.user), "can_manage": can_manage(request.user),
+    })
+
+
+@login_required
+def my_findings(request):
+    if not is_checklist_filler(request.user):
+        raise PermissionDenied("این بخش برای کاربران مسئول پیگیری نقص‌ها است.")
+    findings = Finding.objects.filter(Q(assigned_user=request.user) | Q(assigned_person__user=request.user)).exclude(
+        status=Finding.Status.CLOSED
+    ).select_related("equipment", "inspection", "assigned_person", "assigned_user").order_by("due_date", "-created_at")
+    return render(request, "core/my_findings.html", {
+        "findings": findings, "people": checklist_assignees(),
+        "can_edit": True, "can_manage": False, "my_findings": True, "today": timezone.localdate(),
     })
 
 
@@ -759,8 +1270,10 @@ def finding_action_response(request, finding, message, *, error=False):
         payload = {"ok": not error, "message": message, "closed": finding.status == Finding.Status.CLOSED, "remove": not matches}
         if not error and matches:
             payload["html"] = render_to_string("core/finding_card.html", {
-                "finding": finding, "people": Person.objects.filter(active=True),
+                "finding": finding, "people": checklist_assignees(),
                 "can_edit": can_edit(request.user), "can_manage": can_manage(request.user),
+                "my_findings": is_checklist_filler(request.user),
+                "today": timezone.localdate(),
             }, request=request)
         return JsonResponse(payload, status=400 if error else 200)
     (messages.error if error else messages.success)(request, message)
@@ -772,23 +1285,29 @@ def finding_action_response(request, finding, message, *, error=False):
 @require_POST
 def finding_close(request, pk):
     with transaction.atomic():
-        finding = get_object_or_404(Finding.objects.select_for_update().select_related("equipment"), pk=pk)
+        finding = get_object_or_404(Finding.objects.select_for_update().select_related("equipment", "assigned_person", "assigned_user"), pk=pk)
         action = request.POST.get("action", "")
         if finding.status == Finding.Status.CLOSED:
             return finding_action_response(request, finding, "این اقدام قبلاً بسته شده است.", error=True)
         if action == "assign":
+            if not can_manage(request.user):
+                raise PermissionDenied("تخصیص مسئول نقص فقط برای مدیر مجاز است.")
             person_id = request.POST.get("assigned_person", "").strip()
-            assigned_person = Person.objects.filter(pk=person_id, active=True).first() if person_id.isdigit() else None
+            assigned_person = checklist_assignees().filter(pk=person_id).first() if person_id.isdigit() else None
             try:
                 due_date = parse_date(request.POST.get("due_date", "").strip())
             except ValueError:
                 due_date = None
             if not assigned_person or not due_date:
                 return finding_action_response(request, finding, "نام مسئول و مهلت معتبر اصلاح الزامی است.", error=True)
-            finding.assigned_person, finding.assigned_to, finding.due_date = assigned_person, assigned_person.full_name[:120], due_date
-            finding.save(update_fields=["assigned_person", "assigned_to", "due_date"])
+            finding.assigned_person, finding.assigned_user = assigned_person, assigned_person.user
+            finding.assigned_to, finding.due_date = assigned_person.full_name[:120], due_date
+            finding.save(update_fields=["assigned_person", "assigned_user", "assigned_to", "due_date"])
             record_event(request.user, "تخصیص اقدام اصلاحی", finding, assigned_person.full_name)
             return finding_action_response(request, finding, "مسئول و مهلت اصلاح ثبت شد.")
+        owns_finding = finding.assigned_user_id == request.user.pk or (finding.assigned_person_id and finding.assigned_person.user_id == request.user.pk)
+        if not can_manage(request.user) and (not is_checklist_filler(request.user) or not owns_finding):
+            raise PermissionDenied("فقط مدیر یا مسئول تعیین‌شده می‌تواند وضعیت این نقص را تغییر دهد.")
         resolution = request.POST.get("resolution", "").strip()
         if action not in ["progress", "verify", "close"] or not resolution:
             return finding_action_response(request, finding, "وضعیت و توضیحات اصلاح را وارد کنید.", error=True)
@@ -799,7 +1318,12 @@ def finding_close(request, pk):
         elif action == "verify": finding.status = Finding.Status.VERIFY
         else:
             if not can_manage(request.user): raise PermissionDenied("بستن نقص و بازگشت به سرویس به تأیید مدیر نیاز دارد.")
-            if finding.blocks_operation and not finding.equipment.inspections.filter(status=Inspection.Status.COMPLETED, outcome__in=[Inspection.Outcome.PASS, Inspection.Outcome.CONDITIONAL], completed_at__gt=finding.created_at).exists():
+            if finding.blocks_operation and not finding.equipment.inspections.filter(
+                status=Inspection.Status.COMPLETED,
+                review_state=Inspection.ReviewState.APPROVED,
+                outcome__in=[Inspection.Outcome.PASS, Inspection.Outcome.CONDITIONAL],
+                completed_at__gt=finding.created_at,
+            ).exists():
                 return finding_action_response(request, finding, "پیش از بازگشت تجهیز بحرانی به سرویس، بازرسی مجدد با نتیجه قبول لازم است.", error=True)
             finding.status = Finding.Status.CLOSED; finding.verified_by = request.user; finding.verified_at = timezone.now()
         finding.save()
@@ -807,6 +1331,7 @@ def finding_close(request, pk):
     return finding_action_response(request, finding, "وضعیت اقدام اصلاحی ثبت شد.")
 
 
+@deny_checklist_filler
 @login_required
 def maintenance_list(request):
     items = MaintenanceRecord.objects.select_related("equipment", "created_by", "finding")
@@ -826,6 +1351,7 @@ def maintenance_new(request):
     return render(request, "core/form.html", {"form": form, "title": "ثبت تعمیر و نگهداری", "back_url": "maintenance_list", "submit_label": "ثبت سابقه"})
 
 
+@deny_checklist_filler
 @login_required
 def reports(request):
     equipment = Equipment.objects.filter(archived=False).select_related("equipment_type", "area", "department")
@@ -842,6 +1368,7 @@ def reports(request):
     return render(request, "core/reports.html", {"equipment": equipment, "inspections": inspections[:12], "findings": findings[:12], "types": EquipmentType.objects.filter(active=True), "areas": Area.objects.all(), "selected_type": request.GET.get("type", ""), "selected_area": request.GET.get("area", "")})
 
 
+@deny_checklist_filler
 @login_required
 def equipment_csv(request):
     output = io.StringIO()
@@ -876,6 +1403,7 @@ def equipment_csv(request):
     return response
 
 
+@deny_checklist_filler
 @login_required
 def settings_page(request):
     return render(request, "core/settings.html", {"types": EquipmentType.objects.all(), "areas": Area.objects.all(), "departments": Department.objects.select_related("area"), "categories": DocumentCategory.objects.all(), "qualification_types": QualificationType.objects.all(), "templates": ChecklistTemplate.objects.prefetch_related("items").all(), "can_manage": can_manage(request.user)})
