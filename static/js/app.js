@@ -178,7 +178,7 @@
         const assignee = document.querySelector('[data-inspection-assignee]');
         const dueDate = document.querySelector('[data-inspection-due-date]');
         if (assignee) assignee.textContent = result.assignee;
-        if (dueDate) dueDate.textContent = result.due_date;
+        if (dueDate) dueDate.textContent = window.PersianCalendar?.displayFromIso(result.due_date) || result.due_date;
       } else {
         const state = document.querySelector('[data-inspection-review-state]');
         if (state) {

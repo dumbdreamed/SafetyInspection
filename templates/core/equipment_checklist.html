@@ -9,13 +9,13 @@
     <div class="inspection-result {% if latest_inspection.outcome == 'pass' %}result-pass{% elif latest_inspection.outcome == 'conditional' %}result-conditional{% elif latest_inspection.outcome == 'fail' %}result-fail{% else %}result-unknown{% endif %}">
       <span class="inspection-result-icon" aria-hidden="true">{% if latest_inspection.outcome == 'pass' %}✓{% elif latest_inspection.outcome == 'conditional' %}!{% elif latest_inspection.outcome == 'fail' %}×{% else %}—{% endif %}</span>
       <div><small>نتیجه آخرین بازرسی تأییدشده</small><strong>{% if latest_inspection.outcome == 'pass' %}قبول{% elif latest_inspection.outcome == 'conditional' %}قبول مشروط{% elif latest_inspection.outcome == 'fail' %}مردود{% elif latest_inspection %}نتیجه ثبت نشده{% else %}هنوز بازرسی نشده{% endif %}</strong>
-      {% if latest_inspection.completed_at %}<span>{{ latest_inspection.completed_at|date:"Y/m/d"|fa }}</span>{% endif %}</div>
+      {% if latest_inspection.completed_at %}<span>{{ latest_inspection.completed_at|jalali_date }}</span>{% endif %}</div>
       {% if latest_inspection %}<a href="{% url 'inspection_detail' latest_inspection.pk %}">مشاهده نتیجه ←</a>{% endif %}
     </div>
     <div class="inspection-stat"><small>وزن مردود در آخرین بازرسی</small><strong>{% if latest_inspection.failed_weight_percent != None %}{{ latest_inspection.failed_weight_percent|fa }}٪{% else %}—{% endif %}</strong><span>{% if latest_inspection.failed_weight_percent != None %}آستانه همان بازرسی: {{ latest_inspection.threshold_snapshot|fa }}٪{% else %}امتیاز ثبت‌شده‌ای در دسترس نیست{% endif %}</span></div>
     <div class="inspection-stat"><small>چک‌لیست پیشنهادی</small><strong>{{ checklist_items|length|fa }} مورد</strong><span>{{ checklist_critical_count|fa }} مورد بحرانی · آستانه رد {{ equipment_checklist.rejection_threshold|fa }}٪</span></div>
   </div>
-  {% if pending_inspection %}<div class="notice notice-warning"><span>◷</span><div><strong>بازرسی در انتظار تأیید مدیر</strong><p>نتیجه این ارسال هنوز وضعیت نهایی ایمنی تجهیز محسوب نمی‌شود.</p><a href="{% url 'inspection_detail' pending_inspection.pk %}">مشاهده ارسال · {{ pending_inspection.inspector.get_full_name|default:pending_inspection.inspector.username }} · {{ pending_inspection.submitted_at|date:"Y/m/d"|fa }}</a></div></div>{% endif %}
+  {% if pending_inspection %}<div class="notice notice-warning"><span>◷</span><div><strong>بازرسی در انتظار تأیید مدیر</strong><p>نتیجه این ارسال هنوز وضعیت نهایی ایمنی تجهیز محسوب نمی‌شود.</p><a href="{% url 'inspection_detail' pending_inspection.pk %}">مشاهده ارسال · {{ pending_inspection.inspector.get_full_name|default:pending_inspection.inspector.username }} · {{ pending_inspection.submitted_at|jalali_date }}</a></div></div>{% endif %}
   <p class="inspection-rule">خرابی هر مورد بحرانی به‌تنهایی موجب رد می‌شود. وزن‌ها و آستانه پیشنهادی باید با دستورالعمل سازنده و الزامات محل کار تأیید شوند.</p>
   <details class="inspection-checks" open>
     <summary><span>موارد چک‌لیست</span><span>{{ checklist_items|length|fa }} مورد <span class="inspection-chevron" aria-hidden="true">⌄</span></span></summary>

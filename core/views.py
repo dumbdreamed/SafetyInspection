@@ -15,7 +15,6 @@ from django.contrib.auth.models import Group
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Count, Q, Exists, OuterRef
-from django.db.models.functions import TruncMonth
 from django.http import Http404, HttpResponse, JsonResponse, FileResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
@@ -27,6 +26,7 @@ from django.views.decorators.http import require_GET, require_POST
 from .forms import (AssignmentForm, DocumentForm, EquipmentForm, EquipmentTypeForm, FindingCloseForm,
                     InspectionDelegationForm, InspectionReassignmentForm, InspectionScheduleForm, MaintenanceForm, OrganizationClusterForm, OrganizationPositionForm, PersonForm, QualificationForm)
 from .equipment_sheets import EQUIPMENT_SHEET_PROFILES
+from .jalali import format_jalali_date, format_jalali_month_parts, gregorian_to_jalali, jalali_to_gregorian
 from .models import (Area, Assignment, AuditLog, ChecklistItem, ChecklistTemplate, Department, Document,
                      DocumentCategory, Equipment, EquipmentType, Finding, Inspection, InspectionResponse,
                      MaintenanceRecord, OrganizationCluster, OrganizationPosition, Person, Qualification, QualificationType, add_months, show_organization_chain)
@@ -184,22 +184,25 @@ def dashboard(request):
         findings.values("severity").annotate(total=Count("id")).values_list("severity", "total")
     )
 
-    month_starts = [today.replace(day=1)]
-    for _ in range(5):
-        month_starts.append((month_starts[-1] - timedelta(days=1)).replace(day=1))
-    month_starts.reverse()
-    trend_counts = {
-        (row["month"].year, row["month"].month): row["total"]
-        for row in approved_inspections.filter(
+    jalali_year, jalali_month, _ = gregorian_to_jalali(today.year, today.month, today.day)
+    jalali_months = []
+    for offset in range(-5, 1):
+        absolute_month = jalali_year * 12 + jalali_month - 1 + offset
+        year, month_index = divmod(absolute_month, 12)
+        jalali_months.append((year, month_index + 1))
+    inspection_trend = []
+    for year, month in jalali_months:
+        start = jalali_to_gregorian(year, month, 1)
+        next_absolute_month = year * 12 + month
+        next_year, next_month_index = divmod(next_absolute_month, 12)
+        next_start = jalali_to_gregorian(next_year, next_month_index + 1, 1)
+        total = approved_inspections.filter(
             status=Inspection.Status.COMPLETED,
-            completed_at__date__gte=month_starts[0],
+            completed_at__date__gte=start,
+            completed_at__date__lt=next_start,
             completed_at__date__lte=today,
-        ).annotate(month=TruncMonth("completed_at")).values("month").annotate(total=Count("id"))
-    }
-    inspection_trend = [
-        {"label": f"{month:%m}/{month:%Y}", "total": trend_counts.get((month.year, month.month), 0)}
-        for month in month_starts
-    ]
+        ).count()
+        inspection_trend.append({"label": format_jalali_month_parts(year, month), "total": total})
     trend_max = max((row["total"] for row in inspection_trend), default=0) or 1
     for row in inspection_trend:
         row["height"] = max(4, round(row["total"] * 100 / trend_max)) if row["total"] else 2
@@ -748,7 +751,7 @@ def inspection_delegate(request):
                 if instructions:
                     source.instructions = instructions
                 source.save(update_fields=["inspector", "due_date", "instructions"])
-                details = f"{old_inspector.username} → {assignee.username}; {old_due_date.isoformat()} → {due_date.isoformat()}"
+                details = f"{old_inspector.username} → {assignee.username}; {format_jalali_date(old_due_date)} → {format_jalali_date(due_date)}"
                 record_event(request.user, "واگذاری مجدد چک‌لیست", source, details)
                 reassigned_count += 1
                 continue
@@ -827,7 +830,7 @@ def inspection_new(request):
         inspection.template_snapshot = list(inspection.template.items.values("id", "section", "description", "critical", "weight"))
         inspection.threshold_snapshot = inspection.template.rejection_threshold
         inspection.save(update_fields=["template_snapshot", "threshold_snapshot"])
-        record_event(request.user, "برنامه‌ریزی بازرسی", inspection, inspection.due_date.isoformat())
+        record_event(request.user, "برنامه‌ریزی بازرسی", inspection, format_jalali_date(inspection.due_date))
         messages.success(request, "بازرسی برنامه‌ریزی شد.")
         return redirect("inspection_detail", pk=inspection.pk)
     return render(request, "core/form.html", {"form": form, "title": "برنامه‌ریزی بازرسی", "back_url": "inspection_list", "submit_label": "ثبت برنامه"})
@@ -899,7 +902,7 @@ def inspection_reassign(request, pk):
         if form.is_valid():
             updated = form.save(commit=False)
             updated.save(update_fields=["inspector", "due_date"])
-            details = f"{old_inspector.username} → {updated.inspector.username}; {old_due_date.isoformat()} → {updated.due_date.isoformat()}"
+            details = f"{old_inspector.username} → {updated.inspector.username}; {format_jalali_date(old_due_date)} → {format_jalali_date(updated.due_date)}"
             record_event(request.user, "واگذاری مجدد چک‌لیست", updated, details)
             success_message = "مسئول و موعد چک‌لیست به‌روزرسانی شد؛ پیش‌نویس و سابقه حفظ شد."
             if is_ajax:

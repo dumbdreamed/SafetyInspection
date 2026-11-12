@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f3f5f9"><title>{% block title %}سامانه ایمنی پایش ماشین آلات{% endblock %} | سامانه ایمنی پایش ماشین آلات</title>
   <script>try{const saved=localStorage.getItem('safetyinspection-theme');const dark=saved?saved==='dark':matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.dataset.theme=dark?'dark':'light';document.querySelector('meta[name="theme-color"]')?.setAttribute('content',dark?'#090c12':'#f3f5f9')}catch(e){document.documentElement.dataset.theme='light'}</script>
-  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=39">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=45">
 </head>
 <body class="{% if can_manage %}role-manager{% else %}role-regular{% endif %}">
 {% if user.is_authenticated %}
@@ -33,5 +33,6 @@
 </div>
 <div class="mobile-overlay" data-menu-close></div>
 {% else %}{% block guest_content %}{% endblock %}{% endif %}
-<script src="{% static 'js/app.js' %}?v=12" defer></script>
+<script src="{% static 'js/jalali-date.js' %}?v=3" defer></script>
+<script src="{% static 'js/app.js' %}?v=13" defer></script>
 </body></html>

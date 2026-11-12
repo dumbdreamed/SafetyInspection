@@ -18,14 +18,14 @@
     {% if "large_hook_capacity" in sheet_fields %}<div><dt>ظرفیت قلاب بزرگ</dt><dd>{{ item.large_hook_capacity|fa|default:"—" }} تن</dd></div>{% endif %}
     {% if "small_hook_capacity" in sheet_fields %}<div><dt>ظرفیت قلاب کوچک</dt><dd>{{ item.small_hook_capacity|fa|default:"—" }} تن</dd></div>{% endif %}
     <div><dt>وضعیت</dt><dd><span class="status-pill {% if item.status == 'active' %}status-success{% elif item.status == 'stopped' %}status-danger{% else %}status-warning{% endif %}">{{ item.get_status_display }}</span></dd></div>
-    {% if "entered_on" in sheet_fields %}<div><dt>تاریخ ورود</dt><dd>{{ item.entered_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
-    {% if "exited_on" in sheet_fields %}<div><dt>تاریخ خروج</dt><dd>{{ item.exited_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
-    {% if "third_party_insurance_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای بیمه شخص ثالث</dt><dd>{{ item.third_party_insurance_expires_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
-    {% if "liability_insurance_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای بیمه مسئولیت مدنی</dt><dd>{{ item.liability_insurance_expires_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
-    {% if "desert_insurance_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای بیمه بیابانی</dt><dd>{{ item.desert_insurance_expires_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
-    {% if "technical_inspection_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای معاینه فنی</dt><dd>{{ item.technical_inspection_expires_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
-    {% if "certificate_issued_on" in sheet_fields %}<div><dt>تاریخ اخذ گواهی</dt><dd>{{ item.certificate_issued_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
-    {% if "certificate_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای گواهی</dt><dd>{{ item.certificate_expires_on|date:"Y/m/d"|fa|default:"—" }}</dd></div>{% endif %}
+    {% if "entered_on" in sheet_fields %}<div><dt>تاریخ ورود</dt><dd>{{ item.entered_on|jalali_date|default:"—" }}</dd></div>{% endif %}
+    {% if "exited_on" in sheet_fields %}<div><dt>تاریخ خروج</dt><dd>{{ item.exited_on|jalali_date|default:"—" }}</dd></div>{% endif %}
+    {% if "third_party_insurance_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای بیمه شخص ثالث</dt><dd>{{ item.third_party_insurance_expires_on|jalali_date|default:"—" }}</dd></div>{% endif %}
+    {% if "liability_insurance_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای بیمه مسئولیت مدنی</dt><dd>{{ item.liability_insurance_expires_on|jalali_date|default:"—" }}</dd></div>{% endif %}
+    {% if "desert_insurance_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای بیمه بیابانی</dt><dd>{{ item.desert_insurance_expires_on|jalali_date|default:"—" }}</dd></div>{% endif %}
+    {% if "technical_inspection_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای معاینه فنی</dt><dd>{{ item.technical_inspection_expires_on|jalali_date|default:"—" }}</dd></div>{% endif %}
+    {% if "certificate_issued_on" in sheet_fields %}<div><dt>تاریخ اخذ گواهی</dt><dd>{{ item.certificate_issued_on|jalali_date|default:"—" }}</dd></div>{% endif %}
+    {% if "certificate_expires_on" in sheet_fields %}<div class="fleet-insurance"><dt>انقضای گواهی</dt><dd>{{ item.certificate_expires_on|jalali_date|default:"—" }}</dd></div>{% endif %}
     {% if "primary_contractor" in sheet_fields %}<div><dt>پیمانکار اصلی</dt><dd>{{ item.primary_contractor|default:"—" }}</dd></div>{% endif %}
     {% if "subcontractor" in sheet_fields %}<div><dt>پیمانکار فرعی</dt><dd>{{ item.subcontractor|default:"—" }}</dd></div>{% endif %}
   </dl>
